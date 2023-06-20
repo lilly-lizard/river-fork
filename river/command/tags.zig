@@ -38,6 +38,26 @@ pub fn setFocusedTags(
     }
 }
 
+/// todo
+pub fn cycleUpFocusedTag(
+    seat: *Seat,
+    _: []const [:0]const u8,
+    _: *?[]const u8,
+) Error!void {
+    _ = seat;
+}
+
+/// todo
+pub fn cycleDownFocusedTag(
+    seat: *Seat,
+    args: []const [:0]const u8,
+    out: *?[]const u8,
+) Error!void {
+    _ = out;
+    _ = args;
+    _ = seat;
+}
+
 pub fn spawnTagmask(
     _: *Seat,
     args: []const [:0]const u8,
