@@ -16,6 +16,7 @@
 
 const std = @import("std");
 const mem = std.mem;
+const expect = @import("std").testing.expect;
 
 const server = &@import("../main.zig").server;
 const util = @import("../util.zig");
@@ -39,16 +40,17 @@ pub fn setFocusedTags(
 }
 
 /// todo
-pub fn cycleUpFocusedTag(
+pub fn incrementFocusedTag(
     seat: *Seat,
     _: []const [:0]const u8,
     _: *?[]const u8,
 ) Error!void {
-    _ = seat;
+    const smallest_tag = leastSignificantBit(seat.focused_output.pending.tags);
+    _ = smallest_tag;
 }
 
 /// todo
-pub fn cycleDownFocusedTag(
+pub fn decrementFocusedTag(
     seat: *Seat,
     args: []const [:0]const u8,
     out: *?[]const u8,
@@ -161,4 +163,32 @@ fn parseTags(
     }
 
     return tags;
+}
+
+/// Returns `in` but with only the least significant bit set.
+fn leastSignificantBit(in: u32) u32 {
+    var res: u32 = 0;
+    var current_bit_index: i32 = 31;
+    const one: u32 = 1;
+
+    while (current_bit_index >= 0) {
+        const current_bit = in & (one >> current_bit_index);
+        if (current_bit != 0) {
+            res = current_bit;
+        }
+        current_bit_index -= 1;
+    }
+
+    return res;
+}
+
+test "leastSignificantBit" {
+    const t1 = leastSignificantBit(0);
+    try expect(t1 == 0);
+
+    const t2 = leastSignificantBit(0b0010_0000);
+    try expect(t2 == 0b0010_0000);
+
+    const t3 = leastSignificantBit(0b1010);
+    try expect(t3 == 0b0010);
 }
