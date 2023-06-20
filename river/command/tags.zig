@@ -168,13 +168,17 @@ fn parseTags(
 /// Returns `in` but with only the least significant bit set.
 fn leastSignificantBit(in: u32) u32 {
     var res: u32 = 0;
-    var current_bit_index: i32 = 31;
+    var current_bit_index: u5 = 31;
     const one: u32 = 1;
 
-    while (current_bit_index >= 0) {
-        const current_bit = in & (one >> current_bit_index);
+    while (true) {
+        const current_bit = in & (one << current_bit_index);
         if (current_bit != 0) {
             res = current_bit;
+        }
+
+        if (current_bit_index == 0) {
+            break;
         }
         current_bit_index -= 1;
     }
