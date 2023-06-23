@@ -45,8 +45,12 @@ pub fn incrementFocusedTag(
     _: []const [:0]const u8,
     _: *?[]const u8,
 ) Error!void {
-    const smallest_tag = leastSignificantBit(seat.focused_output.pending.tags);
-    _ = smallest_tag;
+    if (seat.focused_output.pending.tags == 0) {
+        // if no tags are currently focused, default to focusing the first tag
+        seat.focused_output.previous_tags = seat.focused_output.pending.tags;
+        seat.focused_output.pending = 1;
+        return;
+    }
 }
 
 /// todo
@@ -165,16 +169,21 @@ fn parseTags(
     return tags;
 }
 
-/// Returns `in` but with only the least significant bit set.
-fn leastSignificantBit(in: u32) u32 {
-    var res: u32 = 0;
+/// Returns the index of the least significant bit set in `in`.
+/// Returns `Error.Other` if the there are no bits set in `in`.
+fn leastSignificantBitIndex(in: u32) Error!u32 {
+    if (in == 0) {
+        return Error.Other;
+    }
+
+    var smallest_bit_index: u5 = 0;
     var current_bit_index: u5 = 31;
     const one: u32 = 1;
 
     while (true) {
         const current_bit = in & (one << current_bit_index);
         if (current_bit != 0) {
-            res = current_bit;
+            smallest_bit_index = current_bit_index;
         }
 
         if (current_bit_index == 0) {
@@ -183,16 +192,16 @@ fn leastSignificantBit(in: u32) u32 {
         current_bit_index -= 1;
     }
 
-    return res;
+    return smallest_bit_index;
 }
 
-test "leastSignificantBit" {
-    const t1 = leastSignificantBit(0);
+test "leastSignificantBitIndex" {
+    const t1 = leastSignificantBitIndex(0);
     try expect(t1 == 0);
 
-    const t2 = leastSignificantBit(0b0010_0000);
+    const t2 = leastSignificantBitIndex(0b0010_0000);
     try expect(t2 == 0b0010_0000);
 
-    const t3 = leastSignificantBit(0b1010);
+    const t3 = leastSignificantBitIndex(0b1010);
     try expect(t3 == 0b0010);
 }
