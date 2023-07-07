@@ -42,15 +42,23 @@ pub fn setFocusedTags(
 /// todo
 pub fn incrementFocusedTag(
     seat: *Seat,
-    _: []const [:0]const u8,
-    _: *?[]const u8,
+    args: []const [:0]const u8,
+    out: *?[]const u8,
 ) Error!void {
+    // if no tags are currently focused, default to focusing the first tag
     if (seat.focused_output.pending.tags == 0) {
-        // if no tags are currently focused, default to focusing the first tag
         seat.focused_output.previous_tags = seat.focused_output.pending.tags;
         seat.focused_output.pending = 1;
         return;
     }
+
+    const wrap_index_u32 = try std.fmt.parseInt(u32, args[1], 10);
+    _ = wrap_index_u32;
+
+    const lowest_tag_index = leastSignificantBitIndex(seat.focused_output.pending.tags);
+    _ = lowest_tag_index;
+
+    _ = out;
 }
 
 /// todo
@@ -167,6 +175,17 @@ fn parseTags(
     }
 
     return tags;
+}
+
+fn parseWrapIndex(
+    args: []const [:0]const u8,
+) Error!u32 {
+    if (args.len < 2) return Error.NotEnoughArguments;
+    if (args.len > 2) return Error.TooManyArguments;
+
+    const wrap_index_u32 = try std.fmt.parseInt(u32, args[1], 10);
+
+    return wrap_index_u32;
 }
 
 /// Returns the index of the least significant bit set in `in`.
