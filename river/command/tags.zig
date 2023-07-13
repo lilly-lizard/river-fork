@@ -66,18 +66,20 @@ fn shiftFocusedTag(
     // if no tags are currently focused, default to focusing the first tag
     if (seat.focused_output.pending.tags == 0) {
         seat.focused_output.previous_tags = seat.focused_output.pending.tags;
-        seat.focused_output.pending = 1;
+        seat.focused_output.pending.tags = 1;
         return;
     }
 
     const old_tags = seat.focused_output.pending.tags;
-    const lowest_tag_index = leastSignificantBitIndex() catch return;
+    const lowest_tag_index = leastSignificantBitIndex(old_tags) catch return;
 
+    // todo make all tag indices u5? include requirement in parseWrapIndex
     const wrap_index_u32 = try parseWrapIndex(args, out);
-    const incremented_tag_index = (lowest_tag_index + shift_amount) % wrap_index_u32;
+    var incremented_tag_index = @intCast(u32, @intCast(i32, lowest_tag_index) + shift_amount);
+    incremented_tag_index = incremented_tag_index % wrap_index_u32;
 
-    var new_tags = old_tags ^ (1 << lowest_tag_index);
-    new_tags = new_tags | (1 << incremented_tag_index);
+    var new_tags = old_tags ^ (@as(u32, 1) << @intCast(u5, lowest_tag_index));
+    new_tags = new_tags | (@as(u32, 1) << @intCast(u5, incremented_tag_index));
 
     seat.focused_output.pending.tags = new_tags;
 }
@@ -197,7 +199,7 @@ fn parseU32(
     const wrap_index_u32 = try std.fmt.parseInt(u32, args[1], 10);
 
     if (wrap_index_u32 == 0) {
-        out.* = try std.fmt.allocPrint(util.gpa, equal_zero_error_msg, .{});
+        out.* = equal_zero_error_msg;
         return Error.Other;
     }
 
