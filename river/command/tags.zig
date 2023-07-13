@@ -45,20 +45,7 @@ pub fn incrementFocusedTag(
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!void {
-    // if no tags are currently focused, default to focusing the first tag
-    if (seat.focused_output.pending.tags == 0) {
-        seat.focused_output.previous_tags = seat.focused_output.pending.tags;
-        seat.focused_output.pending = 1;
-        return;
-    }
-
-    const wrap_index_u32 = try std.fmt.parseInt(u32, args[1], 10);
-    _ = wrap_index_u32;
-
-    const lowest_tag_index = leastSignificantBitIndex(seat.focused_output.pending.tags);
-    _ = lowest_tag_index;
-
-    _ = out;
+    return shiftFocusedTag(seat, args, out, 1);
 }
 
 /// todo
@@ -67,9 +54,32 @@ pub fn decrementFocusedTag(
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!void {
-    _ = out;
-    _ = args;
-    _ = seat;
+    return shiftFocusedTag(seat, args, out, -1);
+}
+
+fn shiftFocusedTag(
+    seat: *Seat,
+    args: []const [:0]const u8,
+    out: *?[]const u8,
+    shift_amount: i32,
+) Error!void {
+    // if no tags are currently focused, default to focusing the first tag
+    if (seat.focused_output.pending.tags == 0) {
+        seat.focused_output.previous_tags = seat.focused_output.pending.tags;
+        seat.focused_output.pending = 1;
+        return;
+    }
+
+    const old_tags = seat.focused_output.pending.tags;
+    const lowest_tag_index = leastSignificantBitIndex() catch return;
+
+    const wrap_index_u32 = try parseWrapIndex(args, out);
+    const incremented_tag_index = (lowest_tag_index + shift_amount) % wrap_index_u32;
+
+    var new_tags = old_tags ^ (1 << lowest_tag_index);
+    new_tags = new_tags | (1 << incremented_tag_index);
+
+    seat.focused_output.pending.tags = new_tags;
 }
 
 pub fn spawnTagmask(
@@ -164,26 +174,32 @@ fn parseTags(
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!u32 {
-    if (args.len < 2) return Error.NotEnoughArguments;
-    if (args.len > 2) return Error.TooManyArguments;
-
-    const tags = try std.fmt.parseInt(u32, args[1], 10);
-
-    if (tags == 0) {
-        out.* = try std.fmt.allocPrint(util.gpa, "tags may not be 0", .{});
-        return Error.Other;
-    }
-
+    const tags = try parseU32(args, out, "tags may not be 0");
     return tags;
 }
 
 fn parseWrapIndex(
     args: []const [:0]const u8,
+    out: *?[]const u8,
+) Error!u32 {
+    const tags = try parseU32(args, out, "tag index may not be 0");
+    return tags;
+}
+
+fn parseU32(
+    args: []const [:0]const u8,
+    out: *?[]const u8,
+    equal_zero_error_msg: []const u8,
 ) Error!u32 {
     if (args.len < 2) return Error.NotEnoughArguments;
     if (args.len > 2) return Error.TooManyArguments;
 
     const wrap_index_u32 = try std.fmt.parseInt(u32, args[1], 10);
+
+    if (wrap_index_u32 == 0) {
+        out.* = try std.fmt.allocPrint(util.gpa, equal_zero_error_msg, .{});
+        return Error.Other;
+    }
 
     return wrap_index_u32;
 }
