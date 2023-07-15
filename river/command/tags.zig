@@ -31,57 +31,25 @@ pub fn setFocusedTags(
     out: *?[]const u8,
 ) Error!void {
     const tags = try parseTags(args, out);
-    const output = seat.focused_output orelse return;
-    if (output.pending.tags != tags) {
-        output.previous_tags = output.pending.tags;
-        output.pending.tags = tags;
-        server.root.applyPending();
-    }
+    setFocusedTagsInternal(seat, tags);
 }
 
-/// todo
+/// todo doc
 pub fn incrementFocusedTag(
     seat: *Seat,
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!void {
-    return shiftFocusedTag(seat, args, out, 1);
+    return shiftMinFocusedTag(seat, args, out, true);
 }
 
-/// todo
+/// todo doc
 pub fn decrementFocusedTag(
     seat: *Seat,
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!void {
-    return shiftFocusedTag(seat, args, out, -1);
-}
-
-fn shiftFocusedTag(
-    seat: *Seat,
-    args: []const [:0]const u8,
-    out: *?[]const u8,
-    shift_amount: i32,
-) Error!void {
-    // if no tags are currently focused, default to focusing the first tag
-    if (seat.focused_output.pending.tags == 0) {
-        seat.focused_output.previous_tags = seat.focused_output.pending.tags;
-        seat.focused_output.pending.tags = 1;
-        return;
-    }
-
-    const old_tags = seat.focused_output.pending.tags;
-    const lowest_tag_index = leastSignificantBitIndex(old_tags) catch return;
-
-    // todo make all tag indices u5? include requirement in parseWrapIndex
-    const wrap_index_u32 = try parseWrapIndex(args, out);
-    var incremented_tag_index = @intCast(u32, @intCast(i32, lowest_tag_index) + shift_amount);
-    incremented_tag_index = incremented_tag_index % wrap_index_u32;
-
-    var new_tags = old_tags ^ (@as(u32, 1) << @intCast(u5, lowest_tag_index));
-    new_tags = new_tags | (@as(u32, 1) << @intCast(u5, incremented_tag_index));
-
-    seat.focused_output.pending.tags = new_tags;
+    return shiftMinFocusedTag(seat, args, out, false);
 }
 
 pub fn spawnTagmask(
@@ -172,53 +140,106 @@ pub fn sendToPreviousTags(
     }
 }
 
+/// Switch focus to the passed tags.
+fn setFocusedTagsInternal(
+    seat: *Seat,
+    tags: u32,
+) void {
+    if (seat.focused_output.pending.tags != tags) {
+        seat.focused_output.previous_tags = seat.focused_output.pending.tags;
+        seat.focused_output.pending.tags = tags;
+        seat.focused_output.arrangeViews();
+        seat.focus(null);
+        server.root.startTransaction();
+    }
+}
+
+/// If `increment` is true, the minimum tag is incremented, otherwise it is decremented.
+fn shiftMinFocusedTag(
+    seat: *Seat,
+    args: []const [:0]const u8,
+    out: *?[]const u8,
+    increment: bool,
+) Error!void {
+    // todo doc make all tag indices u5? include requirement in parseWrapIndex
+    const wrap_index = try parseWrapIndex(args, out);
+
+    // if no tags are currently focused, default to focusing the first tag
+    if (seat.focused_output.pending.tags == 0) {
+        seat.focused_output.previous_tags = seat.focused_output.pending.tags;
+        seat.focused_output.pending.tags = 1;
+        return;
+    }
+
+    const old_tags = seat.focused_output.pending.tags;
+    const lowest_tag_index = leastSignificantBitIndex(old_tags) catch return;
+
+    var shifted_tag_index = lowest_tag_index;
+    if (increment) {
+        shifted_tag_index = shifted_tag_index + 1;
+        shifted_tag_index = shifted_tag_index % wrap_index;
+    } else {
+        if (shifted_tag_index == 0) {
+            shifted_tag_index = wrap_index - 1;
+        } else {
+            shifted_tag_index = shifted_tag_index - 1;
+        }
+    }
+
+    const one_u32: u32 = 1;
+    var new_tags = old_tags ^ (one_u32 << lowest_tag_index); // unset lowest tag
+    new_tags = new_tags | (one_u32 << shifted_tag_index); // replace with shifted tag
+
+    setFocusedTagsInternal(seat, new_tags);
+}
+
 fn parseTags(
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!u32 {
-    const tags = try parseU32(args, out, "tags may not be 0");
+    if (args.len < 2) return Error.NotEnoughArguments;
+    if (args.len > 2) return Error.TooManyArguments;
+
+    const tags = try std.fmt.parseInt(u32, args[1], 10);
+
+    if (tags == 0) {
+        out.* = try std.fmt.allocPrint(util.gpa, "tags may not be 0", .{});
+        return Error.Other;
+    }
+
     return tags;
 }
 
 fn parseWrapIndex(
     args: []const [:0]const u8,
     out: *?[]const u8,
-) Error!u32 {
-    const tags = try parseU32(args, out, "tag index may not be 0");
-    return tags;
-}
-
-fn parseU32(
-    args: []const [:0]const u8,
-    out: *?[]const u8,
-    equal_zero_error_msg: []const u8,
-) Error!u32 {
+) Error!u5 {
     if (args.len < 2) return Error.NotEnoughArguments;
     if (args.len > 2) return Error.TooManyArguments;
 
-    const wrap_index_u32 = try std.fmt.parseInt(u32, args[1], 10);
+    const wrap_index = try std.fmt.parseInt(u5, args[1], 10);
 
-    if (wrap_index_u32 == 0) {
-        out.* = equal_zero_error_msg;
+    if (wrap_index == 0) {
+        out.* = try std.fmt.allocPrint(util.gpa, "tag index may not be 0", .{});
         return Error.Other;
     }
 
-    return wrap_index_u32;
+    return wrap_index;
 }
 
 /// Returns the index of the least significant bit set in `in`.
 /// Returns `Error.Other` if the there are no bits set in `in`.
-fn leastSignificantBitIndex(in: u32) Error!u32 {
+fn leastSignificantBitIndex(in: u32) Error!u5 {
     if (in == 0) {
         return Error.Other;
     }
 
     var smallest_bit_index: u5 = 0;
     var current_bit_index: u5 = 31;
-    const one: u32 = 1;
+    const one_u32: u32 = 1;
 
     while (true) {
-        const current_bit = in & (one << current_bit_index);
+        const current_bit = in & (one_u32 << current_bit_index);
         if (current_bit != 0) {
             smallest_bit_index = current_bit_index;
         }
