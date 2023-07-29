@@ -68,11 +68,7 @@ pub fn setViewTags(
     out: *?[]const u8,
 ) Error!void {
     const tags = try parseTags(args, out);
-    if (seat.focused == .view) {
-        const view = seat.focused.view;
-        view.pending.tags = tags;
-        server.root.applyPending();
-    }
+    setViewTagsInternal(seat, tags);
 }
 
 /// Toggle focus of the passsed tags.
@@ -151,6 +147,18 @@ fn setFocusedTagsInternal(
         seat.focused_output.arrangeViews();
         seat.focus(null);
         server.root.startTransaction();
+    }
+}
+
+fn setViewTagsInternal(
+    seat: *Seat,
+    tags: u32,
+) void {
+    if (seat.focused == .view) {
+        const view = seat.focused.view;
+        view.pending.tags = tags;
+        seat.focus(null);
+        view.applyPending();
     }
 }
 
