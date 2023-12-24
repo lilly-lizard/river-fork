@@ -141,12 +141,11 @@ fn setFocusedTagsInternal(
     seat: *Seat,
     tags: u32,
 ) void {
-    if (seat.focused_output.pending.tags != tags) {
-        seat.focused_output.previous_tags = seat.focused_output.pending.tags;
-        seat.focused_output.pending.tags = tags;
-        seat.focused_output.arrangeViews();
-        seat.focus(null);
-        server.root.startTransaction();
+    const output = seat.focused_output orelse return;
+    if (output.pending.tags != tags) {
+        output.previous_tags = output.pending.tags;
+        output.pending.tags = tags;
+        server.root.applyPending();
     }
 }
 
@@ -157,8 +156,7 @@ fn setViewTagsInternal(
     if (seat.focused == .view) {
         const view = seat.focused.view;
         view.pending.tags = tags;
-        seat.focus(null);
-        view.applyPending();
+        server.root.applyPending();
     }
 }
 
@@ -169,17 +167,19 @@ fn shiftMinFocusedTag(
     out: *?[]const u8,
     increment: bool,
 ) Error!void {
+    const output = seat.focused_output orelse return;
+
     // todo doc make all tag indices u5? include requirement in parseWrapIndex
     const wrap_index = try parseWrapIndex(args, out);
 
     // if no tags are currently focused, default to focusing the first tag
-    if (seat.focused_output.pending.tags == 0) {
-        seat.focused_output.previous_tags = seat.focused_output.pending.tags;
-        seat.focused_output.pending.tags = 1;
+    if (output.pending.tags == 0) {
+        output.previous_tags = output.pending.tags;
+        output.pending.tags = 1;
         return;
     }
 
-    const old_tags = seat.focused_output.pending.tags;
+    const old_tags = output.pending.tags;
     const lowest_tag_index = leastSignificantBitIndex(old_tags) catch return;
 
     var shifted_tag_index = lowest_tag_index;
