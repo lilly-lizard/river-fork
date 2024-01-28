@@ -28,10 +28,12 @@ const util = @import("util.zig");
 
 const InputConfig = @import("InputConfig.zig");
 const InputDevice = @import("InputDevice.zig");
+const InputRelay = @import("InputRelay.zig");
 const Keyboard = @import("Keyboard.zig");
 const PointerConstraint = @import("PointerConstraint.zig");
 const Seat = @import("Seat.zig");
 const Switch = @import("Switch.zig");
+const TextInput = @import("TextInput.zig");
 
 const default_seat_name = "default";
 
@@ -44,6 +46,8 @@ relative_pointer_manager: *wlr.RelativePointerManagerV1,
 virtual_pointer_manager: *wlr.VirtualPointerManagerV1,
 virtual_keyboard_manager: *wlr.VirtualKeyboardManagerV1,
 pointer_constraints: *wlr.PointerConstraintsV1,
+input_method_manager: *wlr.InputMethodManagerV2,
+text_input_manager: *wlr.TextInputManagerV3,
 
 configs: std.ArrayList(InputConfig),
 devices: wl.list.Head(InputDevice, .link),
@@ -57,6 +61,10 @@ new_virtual_keyboard: wl.Listener(*wlr.VirtualKeyboardV1) =
     wl.Listener(*wlr.VirtualKeyboardV1).init(handleNewVirtualKeyboard),
 new_constraint: wl.Listener(*wlr.PointerConstraintV1) =
     wl.Listener(*wlr.PointerConstraintV1).init(handleNewConstraint),
+new_input_method: wl.Listener(*wlr.InputMethodV2) =
+    wl.Listener(*wlr.InputMethodV2).init(handleNewInputMethod),
+new_text_input: wl.Listener(*wlr.TextInputV3) =
+    wl.Listener(*wlr.TextInputV3).init(handleNewTextInput),
 
 pub fn init(self: *Self) !void {
     const seat_node = try util.gpa.create(std.TailQueue(Seat).Node);
@@ -69,6 +77,8 @@ pub fn init(self: *Self) !void {
         .virtual_pointer_manager = try wlr.VirtualPointerManagerV1.create(server.wl_server),
         .virtual_keyboard_manager = try wlr.VirtualKeyboardManagerV1.create(server.wl_server),
         .pointer_constraints = try wlr.PointerConstraintsV1.create(server.wl_server),
+        .input_method_manager = try wlr.InputMethodManagerV2.create(server.wl_server),
+        .text_input_manager = try wlr.TextInputManagerV3.create(server.wl_server),
         .configs = std.ArrayList(InputConfig).init(util.gpa),
 
         .devices = undefined,
@@ -84,6 +94,8 @@ pub fn init(self: *Self) !void {
     self.virtual_pointer_manager.events.new_virtual_pointer.add(&self.new_virtual_pointer);
     self.virtual_keyboard_manager.events.new_virtual_keyboard.add(&self.new_virtual_keyboard);
     self.pointer_constraints.events.new_constraint.add(&self.new_constraint);
+    self.input_method_manager.events.input_method.add(&self.new_input_method);
+    self.text_input_manager.events.text_input.add(&self.new_text_input);
 }
 
 pub fn deinit(self: *Self) void {
@@ -93,6 +105,8 @@ pub fn deinit(self: *Self) void {
     self.new_virtual_pointer.link.remove();
     self.new_virtual_keyboard.link.remove();
     self.new_constraint.link.remove();
+    self.new_input_method.link.remove();
+    self.new_text_input.link.remove();
 
     while (self.seats.pop()) |seat_node| {
         seat_node.data.deinit();
@@ -156,5 +170,21 @@ fn handleNewConstraint(
     PointerConstraint.create(wlr_constraint) catch {
         log.err("out of memory", .{});
         wlr_constraint.resource.postNoMemory();
+    };
+}
+
+fn handleNewInputMethod(_: *wl.Listener(*wlr.InputMethodV2), input_method: *wlr.InputMethodV2) void {
+    const seat: *Seat = @ptrFromInt(input_method.seat.data);
+
+    log.debug("new input method on seat {s}", .{seat.wlr_seat.name});
+
+    seat.relay.newInputMethod(input_method);
+}
+
+fn handleNewTextInput(_: *wl.Listener(*wlr.TextInputV3), wlr_text_input: *wlr.TextInputV3) void {
+    TextInput.create(wlr_text_input) catch {
+        log.err("out of memory", .{});
+        wlr_text_input.resource.postNoMemory();
+        return;
     };
 }

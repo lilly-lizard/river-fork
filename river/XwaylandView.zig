@@ -39,22 +39,23 @@ xwayland_surface: *wlr.XwaylandSurface,
 /// Created on map and destroyed on unmap
 surface_tree: ?*wlr.SceneTree = null,
 
-// Listeners that are always active over the view's lifetime
-destroy: wl.Listener(*wlr.XwaylandSurface) = wl.Listener(*wlr.XwaylandSurface).init(handleDestroy),
-map: wl.Listener(*wlr.XwaylandSurface) = wl.Listener(*wlr.XwaylandSurface).init(handleMap),
-unmap: wl.Listener(*wlr.XwaylandSurface) = wl.Listener(*wlr.XwaylandSurface).init(handleUnmap),
+// Active over entire lifetime
+destroy: wl.Listener(void) = wl.Listener(void).init(handleDestroy),
 request_configure: wl.Listener(*wlr.XwaylandSurface.event.Configure) =
     wl.Listener(*wlr.XwaylandSurface.event.Configure).init(handleRequestConfigure),
-set_override_redirect: wl.Listener(*wlr.XwaylandSurface) =
-    wl.Listener(*wlr.XwaylandSurface).init(handleSetOverrideRedirect),
+set_override_redirect: wl.Listener(void) = wl.Listener(void).init(handleSetOverrideRedirect),
+associate: wl.Listener(void) = wl.Listener(void).init(handleAssociate),
+dissociate: wl.Listener(void) = wl.Listener(void).init(handleDissociate),
 
-// Listeners that are only active while the view is mapped
-set_title: wl.Listener(*wlr.XwaylandSurface) = wl.Listener(*wlr.XwaylandSurface).init(handleSetTitle),
-set_class: wl.Listener(*wlr.XwaylandSurface) = wl.Listener(*wlr.XwaylandSurface).init(handleSetClass),
-set_decorations: wl.Listener(*wlr.XwaylandSurface) =
-    wl.Listener(*wlr.XwaylandSurface).init(handleSetDecorations),
-request_fullscreen: wl.Listener(*wlr.XwaylandSurface) =
-    wl.Listener(*wlr.XwaylandSurface).init(handleRequestFullscreen),
+// Active while the xwayland_surface is associated with a wlr_surface
+map: wl.Listener(void) = wl.Listener(void).init(handleMap),
+unmap: wl.Listener(void) = wl.Listener(void).init(handleUnmap),
+
+// Active while mapped
+set_title: wl.Listener(void) = wl.Listener(void).init(handleSetTitle),
+set_class: wl.Listener(void) = wl.Listener(void).init(handleSetClass),
+set_decorations: wl.Listener(void) = wl.Listener(void).init(handleSetDecorations),
+request_fullscreen: wl.Listener(void) = wl.Listener(void).init(handleRequestFullscreen),
 request_minimize: wl.Listener(*wlr.XwaylandSurface.event.Minimize) =
     wl.Listener(*wlr.XwaylandSurface.event.Minimize).init(handleRequestMinimize),
 
@@ -70,13 +71,16 @@ pub fn create(xwayland_surface: *wlr.XwaylandSurface) error{OutOfMemory}!void {
 
     // Add listeners that are active over the view's entire lifetime
     xwayland_surface.events.destroy.add(&self.destroy);
-    xwayland_surface.events.map.add(&self.map);
-    xwayland_surface.events.unmap.add(&self.unmap);
+    xwayland_surface.events.associate.add(&self.associate);
+    xwayland_surface.events.dissociate.add(&self.dissociate);
     xwayland_surface.events.request_configure.add(&self.request_configure);
     xwayland_surface.events.set_override_redirect.add(&self.set_override_redirect);
 
-    if (xwayland_surface.mapped) {
-        handleMap(&self.map, xwayland_surface);
+    if (xwayland_surface.surface) |surface| {
+        handleAssociate(&self.associate);
+        if (surface.mapped) {
+            handleMap(&self.map);
+        }
     }
 }
 
@@ -145,13 +149,13 @@ pub fn getAppId(self: Self) ?[*:0]const u8 {
     return self.xwayland_surface.class;
 }
 
-fn handleDestroy(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandSurface) void {
+fn handleDestroy(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "destroy", listener);
 
     // Remove listeners that are active for the entire lifetime of the view
     self.destroy.link.remove();
-    self.map.link.remove();
-    self.unmap.link.remove();
+    self.associate.link.remove();
+    self.dissociate.link.remove();
     self.request_configure.link.remove();
     self.set_override_redirect.link.remove();
 
@@ -160,10 +164,24 @@ fn handleDestroy(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandS
     view.destroy();
 }
 
-pub fn handleMap(listener: *wl.Listener(*wlr.XwaylandSurface), xwayland_surface: *wlr.XwaylandSurface) void {
+fn handleAssociate(listener: *wl.Listener(void)) void {
+    const self = @fieldParentPtr(Self, "associate", listener);
+
+    self.xwayland_surface.surface.?.events.map.add(&self.map);
+    self.xwayland_surface.surface.?.events.unmap.add(&self.unmap);
+}
+
+fn handleDissociate(listener: *wl.Listener(void)) void {
+    const self = @fieldParentPtr(Self, "dissociate", listener);
+    self.map.link.remove();
+    self.unmap.link.remove();
+}
+
+pub fn handleMap(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "map", listener);
     const view = self.view;
 
+    const xwayland_surface = self.xwayland_surface;
     const surface = xwayland_surface.surface.?;
     surface.data = @intFromPtr(&view.tree.node);
 
@@ -213,7 +231,7 @@ pub fn handleMap(listener: *wl.Listener(*wlr.XwaylandSurface), xwayland_surface:
     };
 }
 
-fn handleUnmap(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandSurface) void {
+fn handleUnmap(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "unmap", listener);
 
     self.xwayland_surface.surface.?.data = 0;
@@ -239,7 +257,9 @@ fn handleRequestConfigure(
     const self = @fieldParentPtr(Self, "request_configure", listener);
 
     // If unmapped, let the client do whatever it wants
-    if (!self.xwayland_surface.mapped) {
+    if (self.xwayland_surface.surface == null or
+        !self.xwayland_surface.surface.?.mapped)
+    {
         self.xwayland_surface.configure(event.x, event.y, event.width, event.height);
         return;
     }
@@ -252,18 +272,21 @@ fn handleRequestConfigure(
     server.root.applyPending();
 }
 
-fn handleSetOverrideRedirect(
-    listener: *wl.Listener(*wlr.XwaylandSurface),
-    xwayland_surface: *wlr.XwaylandSurface,
-) void {
+fn handleSetOverrideRedirect(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "set_override_redirect", listener);
+    const xwayland_surface = self.xwayland_surface;
 
     log.debug("xwayland surface set override redirect", .{});
 
     assert(xwayland_surface.override_redirect);
 
-    if (xwayland_surface.mapped) handleUnmap(&self.unmap, xwayland_surface);
-    handleDestroy(&self.destroy, xwayland_surface);
+    if (xwayland_surface.surface) |surface| {
+        if (surface.mapped) {
+            handleUnmap(&self.unmap);
+        }
+        handleDissociate(&self.dissociate);
+    }
+    handleDestroy(&self.destroy);
 
     XwaylandOverrideRedirect.create(xwayland_surface) catch {
         log.err("out of memory", .{});
@@ -271,17 +294,17 @@ fn handleSetOverrideRedirect(
     };
 }
 
-fn handleSetTitle(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandSurface) void {
+fn handleSetTitle(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "set_title", listener);
     self.view.notifyTitle();
 }
 
-fn handleSetClass(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandSurface) void {
+fn handleSetClass(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "set_class", listener);
     self.view.notifyAppId();
 }
 
-fn handleSetDecorations(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandSurface) void {
+fn handleSetDecorations(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "set_decorations", listener);
     const view = self.view;
 
@@ -294,10 +317,10 @@ fn handleSetDecorations(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.Xw
     }
 }
 
-fn handleRequestFullscreen(listener: *wl.Listener(*wlr.XwaylandSurface), xwayland_surface: *wlr.XwaylandSurface) void {
+fn handleRequestFullscreen(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "request_fullscreen", listener);
-    if (self.view.pending.fullscreen != xwayland_surface.fullscreen) {
-        self.view.pending.fullscreen = xwayland_surface.fullscreen;
+    if (self.view.pending.fullscreen != self.xwayland_surface.fullscreen) {
+        self.view.pending.fullscreen = self.xwayland_surface.fullscreen;
         server.root.applyPending();
     }
 }

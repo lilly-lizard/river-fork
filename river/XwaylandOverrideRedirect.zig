@@ -34,14 +34,20 @@ const log = std.log.scoped(.xwayland);
 xwayland_surface: *wlr.XwaylandSurface,
 surface_tree: ?*wlr.SceneTree = null,
 
+// Active over entire lifetime
 request_configure: wl.Listener(*wlr.XwaylandSurface.event.Configure) =
     wl.Listener(*wlr.XwaylandSurface.event.Configure).init(handleRequestConfigure),
-destroy: wl.Listener(*wlr.XwaylandSurface) = wl.Listener(*wlr.XwaylandSurface).init(handleDestroy),
-map: wl.Listener(*wlr.XwaylandSurface) = wl.Listener(*wlr.XwaylandSurface).init(handleMap),
-unmap: wl.Listener(*wlr.XwaylandSurface) = wl.Listener(*wlr.XwaylandSurface).init(handleUnmap),
+destroy: wl.Listener(void) = wl.Listener(void).init(handleDestroy),
+set_override_redirect: wl.Listener(void) = wl.Listener(void).init(handleSetOverrideRedirect),
+associate: wl.Listener(void) = wl.Listener(void).init(handleAssociate),
+dissociate: wl.Listener(void) = wl.Listener(void).init(handleDissociate),
+
+// Active while the xwayland_surface is associated with a wlr_surface
+map: wl.Listener(void) = wl.Listener(void).init(handleMap),
+unmap: wl.Listener(void) = wl.Listener(void).init(handleUnmap),
+
+// Active while mapped
 set_geometry: wl.Listener(void) = wl.Listener(void).init(handleSetGeometry),
-set_override_redirect: wl.Listener(*wlr.XwaylandSurface) =
-    wl.Listener(*wlr.XwaylandSurface).init(handleSetOverrideRedirect),
 
 pub fn create(xwayland_surface: *wlr.XwaylandSurface) error{OutOfMemory}!void {
     const self = try util.gpa.create(Self);
@@ -51,12 +57,16 @@ pub fn create(xwayland_surface: *wlr.XwaylandSurface) error{OutOfMemory}!void {
 
     xwayland_surface.events.request_configure.add(&self.request_configure);
     xwayland_surface.events.destroy.add(&self.destroy);
-    xwayland_surface.events.map.add(&self.map);
-    xwayland_surface.events.unmap.add(&self.unmap);
     xwayland_surface.events.set_override_redirect.add(&self.set_override_redirect);
 
-    if (xwayland_surface.mapped) {
-        handleMap(&self.map, xwayland_surface);
+    xwayland_surface.events.associate.add(&self.associate);
+    xwayland_surface.events.dissociate.add(&self.dissociate);
+
+    if (xwayland_surface.surface) |surface| {
+        handleAssociate(&self.associate);
+        if (surface.mapped) {
+            handleMap(&self.map);
+        }
     }
 }
 
@@ -67,19 +77,33 @@ fn handleRequestConfigure(
     event.surface.configure(event.x, event.y, event.width, event.height);
 }
 
-fn handleDestroy(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandSurface) void {
+fn handleDestroy(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "destroy", listener);
 
     self.request_configure.link.remove();
     self.destroy.link.remove();
-    self.map.link.remove();
-    self.unmap.link.remove();
+    self.associate.link.remove();
+    self.dissociate.link.remove();
     self.set_override_redirect.link.remove();
 
     util.gpa.destroy(self);
 }
 
-pub fn handleMap(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandSurface) void {
+fn handleAssociate(listener: *wl.Listener(void)) void {
+    const self = @fieldParentPtr(Self, "associate", listener);
+
+    self.xwayland_surface.surface.?.events.map.add(&self.map);
+    self.xwayland_surface.surface.?.events.unmap.add(&self.unmap);
+}
+
+fn handleDissociate(listener: *wl.Listener(void)) void {
+    const self = @fieldParentPtr(Self, "dissociate", listener);
+
+    self.map.link.remove();
+    self.unmap.link.remove();
+}
+
+pub fn handleMap(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "map", listener);
 
     self.mapImpl() catch {
@@ -124,7 +148,7 @@ pub fn focusIfDesired(self: *Self) void {
     }
 }
 
-fn handleUnmap(listener: *wl.Listener(*wlr.XwaylandSurface), _: *wlr.XwaylandSurface) void {
+fn handleUnmap(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "unmap", listener);
 
     self.set_geometry.link.remove();
@@ -155,18 +179,21 @@ fn handleSetGeometry(listener: *wl.Listener(void)) void {
     self.surface_tree.?.node.setPosition(self.xwayland_surface.x, self.xwayland_surface.y);
 }
 
-fn handleSetOverrideRedirect(
-    listener: *wl.Listener(*wlr.XwaylandSurface),
-    xwayland_surface: *wlr.XwaylandSurface,
-) void {
+fn handleSetOverrideRedirect(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "set_override_redirect", listener);
+    const xwayland_surface = self.xwayland_surface;
 
     log.debug("xwayland surface unset override redirect", .{});
 
     assert(!xwayland_surface.override_redirect);
 
-    if (xwayland_surface.mapped) handleUnmap(&self.unmap, xwayland_surface);
-    handleDestroy(&self.destroy, xwayland_surface);
+    if (xwayland_surface.surface) |surface| {
+        if (surface.mapped) {
+            handleUnmap(&self.unmap);
+        }
+        handleDissociate(&self.dissociate);
+    }
+    handleDestroy(&self.destroy);
 
     XwaylandView.create(xwayland_surface) catch {
         log.err("out of memory", .{});

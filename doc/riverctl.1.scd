@@ -347,8 +347,20 @@ matches everything while _\*\*_ and the empty string are invalid.
 
 ## CONFIGURATION
 
-*attach-mode* *top*|*bottom*
-	Configure where new views should attach to the view stack.
+*default-attach-mode* *top*|*bottom*|*after <N>*
+	Set the attach mode to be used by all outputs by default.
+
+	Possible values:
+	- top: Prepends the newly spawned view at the top of the stack.
+	- bottom: Appends the newly spawned view at the bottom of the stack.
+	- after <N>: Inserts the newly spawned view after N views in the stack.
+
+	Note that the deprecated *attach-mode* command is aliased to
+	*default-attach-mode* for backwards compatibility.
+
+*output-attach-mode* *top*|*bottom*|*after <N>*
+	Set the attach mode of the currently focused output, overriding the value of
+	default-attach-mode if any.
 
 *background-color* _0xRRGGBB_|_0xRRGGBBAA_
 	Set the background color.
@@ -442,7 +454,8 @@ matches everything while _\*\*_ and the empty string are invalid.
 *keyboard-group-add* _group_name_ _input_device_name_
 	Add a keyboard to a keyboard group, identified by the keyboard's
 	input device name. Any currently connected and future keyboards with
-	the given name will be added to the group.
+	the given name will be added to the group. Simple globbing patterns are
+	supported, see the rules section for further information on globs.
 
 *keyboard-group-remove* _group_name_ _input_device_name_
 	Remove a keyboard from a keyboard group, identified by the keyboard's

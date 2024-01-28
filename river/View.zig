@@ -418,9 +418,10 @@ pub fn setPendingOutput(view: *Self, output: *Output) void {
     view.pending_wm_stack_link.remove();
     view.pending_focus_stack_link.remove();
 
-    switch (server.config.attach_mode) {
+    switch (output.attachMode()) {
         .top => output.pending.wm_stack.prepend(view),
         .bottom => output.pending.wm_stack.append(view),
+        .after => |n| view.attachAfter(&output.pending, n),
     }
     output.pending.focus_stack.prepend(view);
 
@@ -476,6 +477,21 @@ pub fn applyConstraints(self: *Self, box: *wlr.Box) void {
     box.height = math.clamp(box.height, self.constraints.min_height, self.constraints.max_height);
 }
 
+/// Attach after n visible, not-floating views in the pending wm_stack
+pub fn attachAfter(view: *Self, pending_state: *Output.PendingState, n: usize) void {
+    var visible: u32 = 0;
+    var it = pending_state.wm_stack.iterator(.forward);
+
+    while (it.next()) |other| {
+        if (visible >= n) break;
+        if (!other.pending.float and other.pending.tags & pending_state.tags != 0) {
+            visible += 1;
+        }
+    }
+
+    it.current.prev.?.insert(&view.pending_wm_stack_link);
+}
+
 /// Called by the impl when the surface is ready to be displayed
 pub fn map(view: *Self) !void {
     log.debug("view '{?s}' mapped", .{view.getTitle()});
@@ -513,7 +529,7 @@ pub fn map(view: *Self) !void {
     }
 
     view.pending.tags = blk: {
-        const default = if (output) |o| o.pending.tags else server.root.fallback.tags;
+        const default = if (output) |o| o.pending.tags else server.root.fallback_pending.tags;
         if (server.config.rules.tags.match(view)) |tags| break :blk tags;
         const tags = default & server.config.spawn_tagmask;
         break :blk if (tags != 0) tags else default;
@@ -529,21 +545,19 @@ pub fn map(view: *Self) !void {
 
         view.pending_wm_stack_link.remove();
         view.pending_focus_stack_link.remove();
-        view.inflight_wm_stack_link.remove();
-        view.inflight_focus_stack_link.remove();
 
-        switch (server.config.attach_mode) {
-            .top => {
-                server.root.fallback.pending.wm_stack.prepend(view);
-                server.root.fallback.inflight.wm_stack.prepend(view);
-            },
-            .bottom => {
-                server.root.fallback.pending.wm_stack.append(view);
-                server.root.fallback.inflight.wm_stack.append(view);
-            },
+        switch (server.config.default_attach_mode) {
+            .top => server.root.fallback_pending.wm_stack.prepend(view),
+            .bottom => server.root.fallback_pending.wm_stack.append(view),
+            .after => |n| view.attachAfter(&server.root.fallback_pending, n),
         }
-        server.root.fallback.pending.focus_stack.prepend(view);
-        server.root.fallback.inflight.focus_stack.prepend(view);
+        server.root.fallback_pending.focus_stack.prepend(view);
+
+        view.inflight_wm_stack_link.remove();
+        view.inflight_wm_stack_link.init();
+
+        view.inflight_focus_stack_link.remove();
+        view.inflight_focus_stack_link.init();
     }
 
     view.float_box = view.pending.box;

@@ -71,19 +71,10 @@ hidden: struct {
 /// This is used to store views and tags when no actual outputs are available.
 /// This must be separate from hidden to ensure we don't mix views that are
 /// in the process of being mapped/unmapped with the mapped views in these lists.
-fallback: struct {
-    tags: u32 = 1 << 0,
-
-    pending: struct {
-        focus_stack: wl.list.Head(View, .pending_focus_stack_link),
-        wm_stack: wl.list.Head(View, .pending_wm_stack_link),
-    },
-
-    inflight: struct {
-        focus_stack: wl.list.Head(View, .inflight_focus_stack_link),
-        wm_stack: wl.list.Head(View, .inflight_wm_stack_link),
-    },
-},
+/// There is no need for inflight lists, instead the inflight links of views are
+/// remove()'d from their current list and init()'d so they may be remove()'d again
+/// when an output becomes available and they are moved to the output's inflight lists.
+fallback_pending: Output.PendingState,
 
 views: wl.list.Head(View, .link),
 
@@ -101,6 +92,10 @@ manager_test: wl.Listener(*wlr.OutputConfigurationV1) =
 power_manager: *wlr.OutputPowerManagerV1,
 power_manager_set_mode: wl.Listener(*wlr.OutputPowerManagerV1.event.SetMode) =
     wl.Listener(*wlr.OutputPowerManagerV1.event.SetMode).init(handlePowerManagerSetMode),
+
+gamma_control_manager: *wlr.GammaControlManagerV1,
+gamma_control_set_gamma: wl.Listener(*wlr.GammaControlManagerV1.event.SetGamma) =
+    wl.Listener(*wlr.GammaControlManagerV1.event.SetGamma).init(handleSetGamma),
 
 /// A list of all outputs
 all_outputs: wl.list.Head(Output, .all_link),
@@ -125,6 +120,8 @@ pub fn init(self: *Self) !void {
     const scene = try wlr.Scene.create();
     errdefer scene.tree.node.destroy();
 
+    scene.setLinuxDmabufV1(server.linux_dmabuf);
+
     const interactive_content = try scene.tree.createSceneTree();
     const drag_icons = try scene.tree.createSceneTree();
     const hidden_tree = try scene.tree.createSceneTree();
@@ -132,8 +129,6 @@ pub fn init(self: *Self) !void {
 
     const outputs = try interactive_content.createSceneTree();
     const xwayland_override_redirect = if (build_options.xwayland) try interactive_content.createSceneTree();
-
-    try scene.attachOutputLayout(output_layout);
 
     _ = try wlr.XdgOutputManagerV1.create(server.wl_server, output_layout);
 
@@ -163,15 +158,9 @@ pub fn init(self: *Self) !void {
                 .wm_stack = undefined,
             },
         },
-        .fallback = .{
-            .pending = .{
-                .focus_stack = undefined,
-                .wm_stack = undefined,
-            },
-            .inflight = .{
-                .focus_stack = undefined,
-                .wm_stack = undefined,
-            },
+        .fallback_pending = .{
+            .focus_stack = undefined,
+            .wm_stack = undefined,
         },
         .views = undefined,
         .output_layout = output_layout,
@@ -179,6 +168,7 @@ pub fn init(self: *Self) !void {
         .active_outputs = undefined,
         .output_manager = try wlr.OutputManagerV1.create(server.wl_server),
         .power_manager = try wlr.OutputPowerManagerV1.create(server.wl_server),
+        .gamma_control_manager = try wlr.GammaControlManagerV1.create(server.wl_server),
         .transaction_timeout = transaction_timeout,
     };
     self.hidden.pending.focus_stack.init();
@@ -186,10 +176,8 @@ pub fn init(self: *Self) !void {
     self.hidden.inflight.focus_stack.init();
     self.hidden.inflight.wm_stack.init();
 
-    self.fallback.pending.focus_stack.init();
-    self.fallback.pending.wm_stack.init();
-    self.fallback.inflight.focus_stack.init();
-    self.fallback.inflight.wm_stack.init();
+    self.fallback_pending.focus_stack.init();
+    self.fallback_pending.wm_stack.init();
 
     self.views.init();
     self.all_outputs.init();
@@ -200,6 +188,7 @@ pub fn init(self: *Self) !void {
     self.output_manager.events.@"test".add(&self.manager_test);
     self.output_layout.events.change.add(&self.layout_change);
     self.power_manager.events.set_mode.add(&self.power_manager_set_mode);
+    self.gamma_control_manager.events.set_gamma.add(&self.gamma_control_set_gamma);
 }
 
 pub fn deinit(self: *Self) void {
@@ -226,7 +215,7 @@ pub fn at(self: Self, lx: f64, ly: f64) ?AtResult {
     const surface: ?*wlr.Surface = blk: {
         if (node.type == .buffer) {
             const scene_buffer = wlr.SceneBuffer.fromNode(node);
-            if (wlr.SceneSurface.fromBuffer(scene_buffer)) |scene_surface| {
+            if (wlr.SceneSurface.tryFromBuffer(scene_buffer)) |scene_surface| {
                 break :blk scene_surface.surface;
             }
         }
@@ -260,8 +249,8 @@ fn handleNewOutput(_: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
     };
 }
 
-/// Remove the output from root.active_outputs and evacuate views if it is a
-/// member of the list.
+/// Remove the output from root.active_outputs and the output layout.
+/// Evacuate views if necessary.
 pub fn deactivateOutput(root: *Self, output: *Output) void {
     {
         // If the output has already been removed, do nothing
@@ -269,24 +258,32 @@ pub fn deactivateOutput(root: *Self, output: *Output) void {
         while (it.next()) |o| {
             if (o == output) break;
         } else return;
-
-        output.active_link.remove();
-        output.active_link.init();
     }
 
+    root.output_layout.remove(output.wlr_output);
+    output.tree.node.setEnabled(false);
+
+    output.active_link.remove();
+    output.active_link.init();
+
     {
-        var it = output.inflight.focus_stack.iterator(.forward);
+        var it = output.inflight.focus_stack.safeIterator(.forward);
         while (it.next()) |view| {
             view.inflight.output = null;
             view.current.output = null;
+
             view.tree.node.reparent(root.hidden.tree);
             view.popup_tree.node.reparent(root.hidden.tree);
+
+            view.inflight_focus_stack_link.remove();
+            view.inflight_focus_stack_link.init();
+
+            view.inflight_wm_stack_link.remove();
+            view.inflight_wm_stack_link.init();
         }
-        root.fallback.inflight.focus_stack.prependList(&output.inflight.focus_stack);
-        root.fallback.inflight.wm_stack.prependList(&output.inflight.wm_stack);
     }
     // Use the first output in the list as fallback. If the last real output
-    // is being removed, store the views in Root.fallback.
+    // is being removed, store the views in Root.fallback_pending.
     const fallback_output = blk: {
         var it = root.active_outputs.iterator(.forward);
         if (it.next()) |o| break :blk o;
@@ -299,11 +296,11 @@ pub fn deactivateOutput(root: *Self, output: *Output) void {
     } else {
         var it = output.pending.focus_stack.iterator(.forward);
         while (it.next()) |view| view.pending.output = null;
-        root.fallback.pending.focus_stack.prependList(&output.pending.focus_stack);
-        root.fallback.pending.wm_stack.prependList(&output.pending.wm_stack);
+        root.fallback_pending.focus_stack.prependList(&output.pending.focus_stack);
+        root.fallback_pending.wm_stack.prependList(&output.pending.wm_stack);
         // Store the focused output tags if we are hotplugged down to
         // 0 real outputs so they can be restored on gaining a new output.
-        root.fallback.tags = output.pending.tags;
+        root.fallback_pending.tags = output.pending.tags;
     }
 
     // Close all layer surfaces on the removed output
@@ -354,20 +351,26 @@ pub fn activateOutput(root: *Self, output: *Output) void {
     // This arranges outputs from left-to-right in the order they appear. The
     // wlr-output-management protocol may be used to modify this arrangement.
     // This also creates a wl_output global which is advertised to clients.
-    root.output_layout.addAuto(output.wlr_output);
-
-    const layout_output = root.output_layout.get(output.wlr_output).?;
+    const layout_output = root.output_layout.addAuto(output.wlr_output) catch {
+        // This would currently be very awkward to handle well and this output
+        // handling code needs to be heavily refactored soon anyways for double
+        // buffered state application as part of the transaction system.
+        // In any case, wlroots 0.16 would have crashed here, the error is only
+        // possible to handle after updating to 0.17.
+        @panic("TODO handle allocation failure here");
+    };
     output.tree.node.setEnabled(true);
     output.tree.node.setPosition(layout_output.x, layout_output.y);
+    output.scene_output.setPosition(layout_output.x, layout_output.y);
 
     // If we previously had no outputs, move all views to the new output and focus it.
     if (first) {
         const log = std.log.scoped(.output_manager);
         log.debug("moving views from fallback stacks to new output", .{});
 
-        output.pending.tags = root.fallback.tags;
+        output.pending.tags = root.fallback_pending.tags;
         {
-            var it = root.fallback.pending.focus_stack.safeIterator(.reverse);
+            var it = root.fallback_pending.wm_stack.safeIterator(.reverse);
             while (it.next()) |view| view.setPendingOutput(output);
         }
         {
@@ -379,10 +382,8 @@ pub fn activateOutput(root: *Self, output: *Output) void {
             }
         }
     }
-    assert(root.fallback.pending.focus_stack.empty());
-    assert(root.fallback.pending.wm_stack.empty());
-
-    root.applyPending();
+    assert(root.fallback_pending.focus_stack.empty());
+    assert(root.fallback_pending.wm_stack.empty());
 }
 
 /// Trigger asynchronous application of pending state for all outputs and views.
@@ -759,33 +760,34 @@ fn processOutputConfig(
         var proposed_state = wlr.Output.State.init();
         head.state.apply(&proposed_state);
 
+        // Work around a division by zero in the wlroots drm backend.
+        // See https://gitlab.freedesktop.org/wlroots/wlroots/-/issues/3791
+        // TODO(wlroots) remove this workaround after 0.17.2 is out.
+        if (output.wlr_output.isDrm() and
+            proposed_state.committed.mode and
+            proposed_state.mode_type == .custom and
+            proposed_state.custom_mode.refresh == 0)
+        {
+            proposed_state.custom_mode.refresh = 60000;
+        }
+
         switch (action) {
             .test_only => {
                 if (!wlr_output.testState(&proposed_state)) success = false;
             },
             .apply => {
-                if (wlr_output.commitState(&proposed_state)) {
-                    if (head.state.enabled) {
-                        // Just updates the output's position if it is already in the layout
-                        self.output_layout.add(output.wlr_output, head.state.x, head.state.y);
-                        output.tree.node.setEnabled(true);
-                        output.tree.node.setPosition(head.state.x, head.state.y);
-                        // Even though we call this in the output's handler for the mode event
-                        // it is necessary to call it here as well since changing e.g. only
-                        // the transform will require the dimensions of the background to be
-                        // updated but will not trigger a mode event.
-                        output.updateBackgroundRect();
-                        output.arrangeLayers();
-                    } else {
-                        self.deactivateOutput(output);
-                        self.output_layout.remove(output.wlr_output);
-                        output.tree.node.setEnabled(false);
-                    }
-                } else {
+                output.applyState(&proposed_state) catch {
                     std.log.scoped(.output_manager).err("failed to apply config to output {s}", .{
                         output.wlr_output.name,
                     });
                     success = false;
+                };
+                if (output.wlr_output.enabled) {
+                    // applyState() will always add the output to the layout on success, which means
+                    // that this function cannot fail as it does not need to allocate a new layout output.
+                    _ = self.output_layout.add(output.wlr_output, head.state.x, head.state.y) catch unreachable;
+                    output.tree.node.setPosition(head.state.x, head.state.y);
+                    output.scene_output.setPosition(head.state.x, head.state.y);
                 }
             },
         }
@@ -836,4 +838,17 @@ fn handlePowerManagerSetMode(
     event.output.commit() catch {
         std.log.scoped(.server).err("output commit failed for {s}", .{event.output.name});
     };
+}
+
+fn handleSetGamma(
+    _: *wl.Listener(*wlr.GammaControlManagerV1.event.SetGamma),
+    event: *wlr.GammaControlManagerV1.event.SetGamma,
+) void {
+    // The output may have been destroyed, in which case there is nothing to do
+    const output = @as(?*Output, @ptrFromInt(event.output.data)) orelse return;
+
+    std.log.debug("client requested to set gamma", .{});
+
+    output.gamma_dirty = true;
+    output.wlr_output.scheduleFrame();
 }

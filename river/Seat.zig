@@ -31,6 +31,7 @@ const Cursor = @import("Cursor.zig");
 const DragIcon = @import("DragIcon.zig");
 const InputDevice = @import("InputDevice.zig");
 const InputManager = @import("InputManager.zig");
+const InputRelay = @import("InputRelay.zig");
 const Keyboard = @import("Keyboard.zig");
 const KeyboardGroup = @import("KeyboardGroup.zig");
 const KeycodeSet = @import("KeycodeSet.zig");
@@ -52,12 +53,24 @@ pub const FocusTarget = union(enum) {
     layer: *LayerSurface,
     lock_surface: *LockSurface,
     none: void,
+
+    pub fn surface(target: FocusTarget) ?*wlr.Surface {
+        return switch (target) {
+            .view => |view| view.rootSurface(),
+            .xwayland_override_redirect => |xwayland_or| xwayland_or.xwayland_surface.surface,
+            .layer => |layer| layer.wlr_layer_surface.surface,
+            .lock_surface => |lock_surface| lock_surface.wlr_lock_surface.surface,
+            .none => null,
+        };
+    }
 };
 
 wlr_seat: *wlr.Seat,
 
 /// Multiple mice are handled by the same Cursor
-cursor: Cursor = undefined,
+cursor: Cursor,
+/// Input Method handling
+relay: InputRelay,
 
 /// ID of the current keymap mode
 mode_id: u32 = 0,
@@ -105,11 +118,14 @@ pub fn init(self: *Self, name: [*:0]const u8) !void {
     self.* = .{
         // This will be automatically destroyed when the display is destroyed
         .wlr_seat = try wlr.Seat.create(server.wl_server, name),
+        .cursor = undefined,
+        .relay = undefined,
         .mapping_repeat_timer = mapping_repeat_timer,
     };
     self.wlr_seat.data = @intFromPtr(self);
 
     try self.cursor.init(self);
+    self.relay.init();
 
     self.wlr_seat.events.request_set_selection.add(&self.request_set_selection);
     self.wlr_seat.events.request_start_drag.add(&self.request_start_drag);
@@ -152,7 +168,7 @@ pub fn focus(self: *Self, _target: ?*View) void {
     // While a layer surface is exclusively focused, views may not receive focus
     if (self.focused == .layer) {
         const wlr_layer_surface = self.focused.layer.wlr_layer_surface;
-        assert(wlr_layer_surface.mapped);
+        assert(wlr_layer_surface.surface.mapped);
         if (wlr_layer_surface.current.keyboard_interactive == .exclusive and
             (wlr_layer_surface.current.layer == .top or wlr_layer_surface.current.layer == .overlay))
         {
@@ -211,14 +227,7 @@ pub fn setFocusRaw(self: *Self, new_focus: FocusTarget) void {
     // If the target is already focused, do nothing
     if (std.meta.eql(new_focus, self.focused)) return;
 
-    // Obtain the target surface
-    const target_surface = switch (new_focus) {
-        .view => |target_view| target_view.rootSurface(),
-        .xwayland_override_redirect => |target_or| target_or.xwayland_surface.surface,
-        .layer => |target_layer| target_layer.wlr_layer_surface.surface,
-        .lock_surface => |lock_surface| lock_surface.wlr_lock_surface.surface,
-        .none => null,
-    };
+    const target_surface = new_focus.surface();
 
     // First clear the current focus
     switch (self.focused) {
@@ -260,6 +269,7 @@ pub fn setFocusRaw(self: *Self, new_focus: FocusTarget) void {
     }
 
     self.keyboardEnterOrLeave(target_surface);
+    self.relay.focus(target_surface);
 
     if (target_surface) |surface| {
         const pointer_constraints = server.input_manager.pointer_constraints;
@@ -348,25 +358,8 @@ pub fn enterMode(self: *Self, mode_id: u32) void {
     }
 }
 
-/// Is there a user-defined mapping for passed keycode, modifiers and keyboard state?
-pub fn hasMapping(
-    self: *Self,
-    keycode: xkb.Keycode,
-    modifiers: wlr.Keyboard.ModifierMask,
-    released: bool,
-    xkb_state: *xkb.State,
-) bool {
-    const modes = &server.config.modes;
-    for (modes.items[self.mode_id].mappings.items) |*mapping| {
-        if (mapping.match(keycode, modifiers, released, xkb_state)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /// Handle any user-defined mapping for passed keycode, modifiers and keyboard state
-/// Returns true if at least one mapping was run
+/// Returns true if a mapping was run
 pub fn handleMapping(
     self: *Self,
     keycode: xkb.Keycode,
@@ -375,21 +368,58 @@ pub fn handleMapping(
     xkb_state: *xkb.State,
 ) bool {
     const modes = &server.config.modes;
-    // In case more than one mapping matches, all of them are activated
-    var handled = false;
+
+    // It is possible for more than one mapping to be matched due to the
+    // existence of layout-independent mappings. It is also possible due to
+    // translation by xkbcommon consuming modifiers. On the swedish layout
+    // for example, translating Super+Shift+Space may consume the Shift
+    // modifier and confict with a mapping for Super+Space. For this reason,
+    // matching wihout xkbcommon translation is done first and after a match
+    // has been found all further matches are ignored.
+    var found: ?*Mapping = null;
+
+    // First check for matches without translating keysyms with xkbcommon.
+    // That is, if the physical keys Mod+Shift+1 are pressed on a US layout don't
+    // translate the keysym 1 to an exclamation mark. This behavior is generally
+    // what is desired.
     for (modes.items[self.mode_id].mappings.items) |*mapping| {
-        if (mapping.match(keycode, modifiers, released, xkb_state)) {
-            if (mapping.options.repeat) {
-                self.repeating_mapping = mapping;
-                self.mapping_repeat_timer.timerUpdate(server.config.repeat_delay) catch {
-                    log.err("failed to update mapping repeat timer", .{});
-                };
+        if (mapping.match(keycode, modifiers, released, xkb_state, .no_translate)) {
+            if (found == null) {
+                found = mapping;
+            } else {
+                log.debug("already found a matching mapping, ignoring additional match", .{});
             }
-            self.runCommand(mapping.command_args);
-            handled = true;
         }
     }
-    return handled;
+
+    // There are however some cases where it is necessary to translate keysyms
+    // with xkbcommon for intuitive behavior. For example, layouts may require
+    // translation with the numlock modifier to obtain keypad number keysyms
+    // (e.g. KP_1).
+    for (modes.items[self.mode_id].mappings.items) |*mapping| {
+        if (mapping.match(keycode, modifiers, released, xkb_state, .translate)) {
+            if (found == null) {
+                found = mapping;
+            } else {
+                log.debug("already found a matching mapping, ignoring additional match", .{});
+            }
+        }
+    }
+
+    // The mapped command must be run outside of the loop above as it may modify
+    // the list of mappings we are iterating through, possibly causing it to be re-allocated.
+    if (found) |mapping| {
+        if (mapping.options.repeat) {
+            self.repeating_mapping = mapping;
+            self.mapping_repeat_timer.timerUpdate(server.config.repeat_delay) catch {
+                log.err("failed to update mapping repeat timer", .{});
+            };
+        }
+        self.runCommand(mapping.command_args);
+        return true;
+    }
+
+    return false;
 }
 
 /// Handle any user-defined mapping for switches

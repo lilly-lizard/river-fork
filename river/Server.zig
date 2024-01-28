@@ -33,6 +33,7 @@ const LayoutManager = @import("LayoutManager.zig");
 const LockManager = @import("LockManager.zig");
 const Output = @import("Output.zig");
 const Root = @import("Root.zig");
+const Seat = @import("Seat.zig");
 const SceneNodeData = @import("SceneNodeData.zig");
 const StatusManager = @import("StatusManager.zig");
 const XdgDecoration = @import("XdgDecoration.zig");
@@ -48,8 +49,10 @@ sigint_source: *wl.EventSource,
 sigterm_source: *wl.EventSource,
 
 backend: *wlr.Backend,
+session: ?*wlr.Session,
 
 renderer: *wlr.Renderer,
+linux_dmabuf: *wlr.LinuxDmabufV1,
 allocator: *wlr.Allocator,
 
 xdg_shell: *wlr.XdgShell,
@@ -68,6 +71,8 @@ foreign_toplevel_manager: *wlr.ForeignToplevelManagerV1,
 
 xdg_activation: *wlr.XdgActivationV1,
 request_activate: wl.Listener(*wlr.XdgActivationV1.event.RequestActivate),
+
+request_set_cursor_shape: wl.Listener(*wlr.CursorShapeManagerV1.event.RequestSetShape),
 
 input_manager: InputManager,
 root: Root,
@@ -89,16 +94,27 @@ pub fn init(self: *Self) !void {
     errdefer self.sigterm_source.remove();
 
     // This frees itself when the wl.Server is destroyed
-    self.backend = try wlr.Backend.autocreate(self.wl_server);
+    self.backend = try wlr.Backend.autocreate(self.wl_server, &self.session);
 
     self.renderer = try wlr.Renderer.autocreate(self.backend);
     errdefer self.renderer.destroy();
-    try self.renderer.initServer(self.wl_server);
+
+    try self.renderer.initWlShm(self.wl_server);
+
+    if (self.renderer.getDmabufFormats() != null and self.renderer.getDrmFd() >= 0) {
+        // wl_drm is a legacy interface and all clients should switch to linux_dmabuf.
+        // However, enough widely used clients still rely on wl_drm that the pragmatic option
+        // is to keep it around for the near future.
+        // TODO remove wl_drm support
+        _ = try wlr.Drm.create(self.wl_server, self.renderer);
+
+        self.linux_dmabuf = try wlr.LinuxDmabufV1.createWithRenderer(self.wl_server, 4, self.renderer);
+    }
 
     self.allocator = try wlr.Allocator.autocreate(self.backend, self.renderer);
     errdefer self.allocator.destroy();
 
-    const compositor = try wlr.Compositor.create(self.wl_server, self.renderer);
+    const compositor = try wlr.Compositor.create(self.wl_server, 6, self.renderer);
     _ = try wlr.Subcompositor.create(self.wl_server);
 
     self.xdg_shell = try wlr.XdgShell.create(self.wl_server, 5);
@@ -109,7 +125,7 @@ pub fn init(self: *Self) !void {
     self.new_toplevel_decoration.setNotify(handleNewToplevelDecoration);
     self.xdg_decoration_manager.events.new_toplevel_decoration.add(&self.new_toplevel_decoration);
 
-    self.layer_shell = try wlr.LayerShellV1.create(self.wl_server);
+    self.layer_shell = try wlr.LayerShellV1.create(self.wl_server, 4);
     self.new_layer_surface.setNotify(handleNewLayerSurface);
     self.layer_shell.events.new_surface.add(&self.new_layer_surface);
 
@@ -137,14 +153,18 @@ pub fn init(self: *Self) !void {
     try self.idle_inhibitor_manager.init();
     try self.lock_manager.init();
 
+    const cursor_shape_manager = try wlr.CursorShapeManagerV1.create(self.wl_server, 1);
+    self.request_set_cursor_shape.setNotify(handleRequestSetCursorShape);
+    cursor_shape_manager.events.request_set_shape.add(&self.request_set_cursor_shape);
+
     // These all free themselves when the wl_server is destroyed
     _ = try wlr.DataDeviceManager.create(self.wl_server);
     _ = try wlr.DataControlManagerV1.create(self.wl_server);
     _ = try wlr.ExportDmabufManagerV1.create(self.wl_server);
-    _ = try wlr.GammaControlManagerV1.create(self.wl_server);
     _ = try wlr.ScreencopyManagerV1.create(self.wl_server);
     _ = try wlr.SinglePixelBufferManagerV1.create(self.wl_server);
     _ = try wlr.Viewporter.create(self.wl_server);
+    _ = try wlr.FractionalScaleManagerV1.create(self.wl_server, 1);
 }
 
 /// Free allocated memory and clean up. Note: order is important here
@@ -203,7 +223,7 @@ fn handleNewXdgSurface(_: *wl.Listener(*wlr.XdgSurface), xdg_surface: *wlr.XdgSu
 
     log.debug("new xdg_toplevel", .{});
 
-    XdgToplevel.create(xdg_surface.role_data.toplevel) catch {
+    XdgToplevel.create(xdg_surface.role_data.toplevel.?) catch {
         log.err("out of memory", .{});
         xdg_surface.resource.postNoMemory();
         return;
@@ -214,17 +234,6 @@ fn handleNewToplevelDecoration(
     _: *wl.Listener(*wlr.XdgToplevelDecorationV1),
     wlr_decoration: *wlr.XdgToplevelDecorationV1,
 ) void {
-    const xdg_toplevel: *XdgToplevel = @ptrFromInt(wlr_decoration.surface.data);
-
-    // TODO(wlroots): The next wlroots version will handle this for us
-    if (xdg_toplevel.decoration != null) {
-        wlr_decoration.resource.postError(
-            .already_constructed,
-            "xdg_toplevel already has a decoration object",
-        );
-        return;
-    }
-
     XdgDecoration.init(wlr_decoration);
 }
 
@@ -293,12 +302,27 @@ fn handleRequestActivate(
 
     const node_data = SceneNodeData.fromSurface(event.surface) orelse return;
     switch (node_data.data) {
-        .view => |view| if (view.current.focus == 0) {
+        .view => |view| if (view.pending.focus == 0) {
             view.pending.urgent = true;
             server.root.applyPending();
         },
         else => |tag| {
             log.info("ignoring xdg-activation-v1 activate request of {s} surface", .{@tagName(tag)});
         },
+    }
+}
+
+fn handleRequestSetCursorShape(
+    _: *wl.Listener(*wlr.CursorShapeManagerV1.event.RequestSetShape),
+    event: *wlr.CursorShapeManagerV1.event.RequestSetShape,
+) void {
+    const focused_client = event.seat_client.seat.pointer_state.focused_client;
+
+    // This can be sent by any client, so we check to make sure this one is
+    // actually has pointer focus first.
+    if (focused_client == event.seat_client) {
+        const seat: *Seat = @ptrFromInt(event.seat_client.seat.data);
+        const name = wlr.CursorShapeManagerV1.shapeName(event.shape);
+        seat.cursor.setXcursor(name);
     }
 }
