@@ -307,6 +307,7 @@ fn keyboardNotifyEnter(self: *Self, wlr_surface: *wlr.Surface) void {
     if (self.wlr_seat.getKeyboard()) |wlr_keyboard| {
         var keycodes = KeycodeSet{
             .items = wlr_keyboard.keycodes,
+            .reason = .{.none} ** 32,
             .len = wlr_keyboard.num_keycodes,
         };
 
@@ -356,6 +357,25 @@ pub fn enterMode(self: *Self, mode_id: u32) void {
     while (it) |node| : (it = node.next) {
         node.data.sendMode(server.config.modes.items[mode_id].name);
     }
+}
+
+/// Is there a user-defined mapping for passed keycode, modifiers and keyboard state?
+pub fn hasMapping(
+    self: *Self,
+    keycode: xkb.Keycode,
+    modifiers: wlr.Keyboard.ModifierMask,
+    released: bool,
+    xkb_state: *xkb.State,
+) bool {
+    const modes = &server.config.modes;
+    for (modes.items[self.mode_id].mappings.items) |*mapping| {
+        if (mapping.match(keycode, modifiers, released, xkb_state, .no_translate) or
+            mapping.match(keycode, modifiers, released, xkb_state, .translate))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Handle any user-defined mapping for passed keycode, modifiers and keyboard state
