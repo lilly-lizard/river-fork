@@ -52,6 +52,10 @@ configure_state: union(enum) {
     acked,
     /// A configure was acked and the surface was committed.
     committed,
+    /// A configure was sent but not acked before the transaction timed out.
+    timed_out: u32,
+    /// A configure was sent and acked but not committed before the transaction timed out.
+    timed_out_acked,
 } = .idle,
 
 // Listeners that are always active over the view's lifetime
@@ -109,7 +113,10 @@ pub fn create(xdg_toplevel: *wlr.XdgToplevel) error{OutOfMemory}!void {
 
 /// Send a configure event, applying the inflight state of the view.
 pub fn configure(self: *Self) bool {
-    assert(self.configure_state == .idle);
+    switch (self.configure_state) {
+        .idle, .timed_out, .timed_out_acked => {},
+        .inflight, .acked, .committed => unreachable,
+    }
 
     const inflight = &self.view.inflight;
     const current = &self.view.current;
@@ -193,6 +200,11 @@ pub fn destroyPopups(self: Self) void {
 fn handleDestroy(listener: *wl.Listener(void)) void {
     const self = @fieldParentPtr(Self, "destroy", listener);
 
+    // This can be be non-null here if the client commits a protocol error or
+    // if it exits without destroying its wayland objects.
+    if (self.decoration) |*decoration| {
+        decoration.deinit();
+    }
     assert(self.decoration == null);
 
     // Remove listeners that are active for the entire lifetime of the view
@@ -284,7 +296,10 @@ fn handleAckConfigure(
         .inflight => |serial| if (acked_configure.serial == serial) {
             self.configure_state = .acked;
         },
-        .acked, .idle, .committed => {},
+        .timed_out => |serial| if (acked_configure.serial == serial) {
+            self.configure_state = .timed_out_acked;
+        },
+        .acked, .idle, .committed, .timed_out_acked => {},
     }
 }
 
@@ -306,7 +321,7 @@ fn handleCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
     self.xdg_toplevel.base.getGeometry(&self.geometry);
 
     switch (self.configure_state) {
-        .idle, .committed => {
+        .idle, .committed, .timed_out => {
             const size_changed = self.geometry.width != old_geometry.width or
                 self.geometry.height != old_geometry.height;
             const no_layout = view.current.output != null and view.current.output.?.layout == null;
@@ -332,9 +347,7 @@ fn handleCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
         // buffers won't be rendered since we are still rendering our
         // stashed buffer from when the transaction started.
         .inflight => view.sendFrameDone(),
-        .acked => {
-            self.configure_state = .committed;
-
+        inline .acked, .timed_out_acked => |_, tag| {
             if (view.inflight.resizing) {
                 view.resizeUpdatePosition(self.geometry.width, self.geometry.height);
             }
@@ -344,7 +357,17 @@ fn handleCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
             view.pending.box.width = self.geometry.width;
             view.pending.box.height = self.geometry.height;
 
-            server.root.notifyConfigured();
+            switch (tag) {
+                .acked => {
+                    self.configure_state = .committed;
+                    server.root.notifyConfigured();
+                },
+                .timed_out_acked => {
+                    self.configure_state = .idle;
+                    view.updateCurrent();
+                },
+                else => unreachable,
+            }
         },
     }
 }
