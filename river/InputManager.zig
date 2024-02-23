@@ -23,6 +23,8 @@ const mem = std.mem;
 const wlr = @import("wlroots");
 const wl = @import("wayland").server.wl;
 
+const globber = @import("globber");
+
 const server = &@import("main.zig").server;
 const util = @import("util.zig");
 
@@ -49,7 +51,10 @@ pointer_constraints: *wlr.PointerConstraintsV1,
 input_method_manager: *wlr.InputMethodManagerV2,
 text_input_manager: *wlr.TextInputManagerV3,
 
+/// List of input device configurations. Ordered by glob generality, with
+/// the most general towards the start and the most specific towards the end.
 configs: std.ArrayList(InputConfig),
+
 devices: wl.list.Head(InputDevice, .link),
 seats: std.TailQueue(Seat) = .{},
 
@@ -88,7 +93,11 @@ pub fn init(self: *Self) !void {
     self.seats.prepend(seat_node);
     try seat_node.data.init(default_seat_name);
 
-    if (build_options.xwayland) server.xwayland.setSeat(self.defaultSeat().wlr_seat);
+    if (build_options.xwayland) {
+        if (server.xwayland) |xwayland| {
+            xwayland.setSeat(self.defaultSeat().wlr_seat);
+        }
+    }
 
     server.backend.events.new_input.add(&self.new_input);
     self.virtual_pointer_manager.events.new_virtual_pointer.add(&self.new_virtual_pointer);
@@ -129,6 +138,19 @@ pub fn inputAllowed(self: Self, wlr_surface: *wlr.Surface) bool {
         exclusive_client == wlr_surface.resource.getClient()
     else
         true;
+}
+
+/// Reconfigures all devices' libinput configuration as well as their output mapping.
+/// This is called on outputs being added or removed and on the input configuration being changed.
+pub fn reconfigureDevices(self: *Self) void {
+    var it = self.devices.iterator(.forward);
+    while (it.next()) |device| {
+        for (self.configs.items) |config| {
+            if (globber.match(device.identifier, config.glob)) {
+                config.apply(device);
+            }
+        }
+    }
 }
 
 fn handleNewInput(listener: *wl.Listener(*wlr.InputDevice), wlr_device: *wlr.InputDevice) void {

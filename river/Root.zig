@@ -192,7 +192,6 @@ pub fn init(self: *Self) !void {
 }
 
 pub fn deinit(self: *Self) void {
-    self.scene.tree.node.destroy();
     self.output_layout.destroy();
     self.transaction_timeout.remove();
 }
@@ -247,6 +246,8 @@ fn handleNewOutput(_: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
         }
         wlr_output.destroy();
     };
+
+    server.input_manager.reconfigureDevices();
 }
 
 /// Remove the output from root.active_outputs and the output layout.
@@ -280,15 +281,17 @@ pub fn deactivateOutput(root: *Self, output: *Output) void {
 
             view.inflight_wm_stack_link.remove();
             view.inflight_wm_stack_link.init();
+
+            if (view.inflight_transaction) {
+                view.commitTransaction();
+            }
         }
     }
     // Use the first output in the list as fallback. If the last real output
     // is being removed, store the views in Root.fallback_pending.
     const fallback_output = blk: {
         var it = root.active_outputs.iterator(.forward);
-        if (it.next()) |o| break :blk o;
-
-        break :blk null;
+        break :blk it.next();
     };
     if (fallback_output) |fallback| {
         var it = output.pending.focus_stack.safeIterator(.reverse);
@@ -333,6 +336,10 @@ pub fn deactivateOutput(root: *Self, output: *Output) void {
         root.notifyLayoutDemandDone();
     }
     while (output.layouts.first) |node| node.data.destroy();
+
+    // We must call reconfigureDevices here to unmap devices that might be mapped to this output
+    // in order to prevent a segfault in wlroots.
+    server.input_manager.reconfigureDevices();
 }
 
 /// Add the output to root.active_outputs and the output layout if it has not
@@ -554,11 +561,16 @@ fn sendConfigures(root: *Self) void {
     while (output_it.next()) |output| {
         var focus_stack_it = output.inflight.focus_stack.iterator(.forward);
         while (focus_stack_it.next()) |view| {
+            assert(!view.inflight_transaction);
+            view.inflight_transaction = true;
+
             // This can happen if a view is unmapped while a layout demand including it is inflight
+            // If a view has been unmapped, don't send it a configure.
             if (!view.mapped) continue;
 
             if (view.configure()) {
                 root.inflight_configures += 1;
+
                 view.saveSurfaceTree();
                 view.sendFrameDone();
             }
@@ -619,8 +631,6 @@ fn commitTransaction(root: *Self) void {
 
             view.tree.node.reparent(root.hidden.tree);
             view.popup_tree.node.reparent(root.hidden.tree);
-
-            view.commitTransaction();
         }
     }
 

@@ -88,13 +88,15 @@ function __riverctl_completion ()
 				drag \
 				drag-lock \
 				disable-while-typing \
+				disable-while-trackpointing \
 				middle-emulation \
 				natural-scroll \
 				left-handed \
 				tap \
 				tap-button-map \
 				scroll-method \
-				scroll-button"
+				scroll-button \
+				map-to-output"
 			COMPREPLY=($(compgen -W "${OPTS}" -- "${COMP_WORDS[3]}"))
 		elif [ "${COMP_WORDS[1]}" == "hide-cursor" ]
 		then
