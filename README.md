@@ -1,16 +1,27 @@
-# river
+<div align="center">
+  <img src="logo/logo_text_background.svg" width="50%">
+</div>
+
+## Overview
 
 River is a dynamic tiling Wayland compositor with flexible runtime
 configuration.
 
 Install from your [package manager](https://repology.org/project/river/versions) —
 Join us at [#river](https://web.libera.chat/?channels=#river) on irc.libera.chat —
-Read our man pages and [wiki](https://github.com/riverwm/river/wiki)
+Read our man pages and [wiki](https://codeberg.org/river/wiki)
 
-*Note: river is currently early in development. Expect breaking
-changes and missing features. Bugs should however be rare at
-this point, if you run into one don't hesitate to [open an
-issue](https://github.com/riverwm/river/issues/new)*
+The main repository is on [codeberg](https://codeberg.org/river/river),
+which is where the issue tracker may be found and where contributions are accepted.
+
+Read-only mirrors exist on [sourcehut](https://git.sr.ht/~ifreund/river)
+and [github](https://github.com/riverwm/river).
+
+*Note: river has not yet seen a stable 1.0 release. It will be necessary to
+make significant breaking before 1.0 to realize my longer term plans. That said,
+I do my best to avoid gratuitous breaking changes and bugs/crashes should be rare.
+If you find a bug don't hesitate to
+[open an issue](https://codeberg.org/river/river/issues/new/choose).*
 
 ## Design goals
 
@@ -38,7 +49,7 @@ distribution.
 - [zig](https://ziglang.org/download/) 0.11
 - wayland
 - wayland-protocols
-- [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.17.1
+- [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.17.2
 - xkbcommon
 - libevdev
 - pixman
@@ -82,3 +93,6 @@ various parties. You should refer to the copyright block of each protocol for
 the licensing information. The protocols prefixed with `river` and developed by
 this project are released under the ISC license (as stated in their copyright
 blocks).
+
+The river logo is licensed under the CC BY-SA 4.0 license, see the
+[license](logo/LICENSE) in the logo directory.
