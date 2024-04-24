@@ -17,6 +17,7 @@
 const std = @import("std");
 const mem = std.mem;
 const expect = @import("std").testing.expect;
+const math = @import("std").math;
 
 const server = &@import("../main.zig").server;
 const util = @import("../util.zig");
@@ -156,32 +157,26 @@ fn leastSignificantBitIndex(in: u32) Error!u5 {
         return Error.Other;
     }
 
+    var bits = in;
     var smallest_bit_index: u5 = 0;
-    var current_bit_index: u5 = 31;
-    const one_u32: u32 = 1;
-
-    while (true) {
-        const current_bit = in & (one_u32 << current_bit_index);
-        if (current_bit != 0) {
-            smallest_bit_index = current_bit_index;
-        }
-
-        if (current_bit_index == 0) {
-            break;
-        }
-        current_bit_index -= 1;
+    while ((bits & 1) == 0) {
+        bits >>= 1;
+        smallest_bit_index += 1;
     }
-
     return smallest_bit_index;
 }
 
-test "leastSignificantBitIndex" {
+test "leastSignificantBitIndex 0" {
     const t1 = leastSignificantBitIndex(0);
     try expect(t1 == 0);
+}
 
+test "leastSignificantBitIndex 1 bit set" {
     const t2 = leastSignificantBitIndex(0b0010_0000);
     try expect(t2 == 0b0010_0000);
+}
 
+test "leastSignificantBitIndex 2 bits set" {
     const t3 = leastSignificantBitIndex(0b1010);
     try expect(t3 == 0b0010);
 }
