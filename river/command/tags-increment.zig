@@ -25,70 +25,74 @@ const util = @import("../util.zig");
 const Error = @import("../command.zig").Error;
 const Seat = @import("../Seat.zig");
 
-/// Increments the minimum focused tag. Requires an integer parameter specifying the
-/// a tag number to wrap around. Examples (wrap_index = 8):
+/// Increments the minimum focused tag. Requires an integer parameter
+/// specifying the a tag number to wrap around. Examples (wrap_index = 8):
 /// - 0010_0000 -> 0001_0000: tag incremented
 /// - 0100_0010 -> 0010_0010: only minimum tag gets incremented
 /// - 0000_0001 -> 1000_0000: increment and wrap around
-pub fn incrementMinFocusedTag(
+pub fn incrementFocusedTags(
     seat: *Seat,
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!void {
-    return shiftMinFocusedTag(seat, args, out, true);
+    _ = out;
+    return shiftFocusedTags(seat, args, true);
 }
 
-/// Decrements the minimum focused tag. Requires an integer parameter specifying the
-/// a tag number to wrap around. Examples (wrap_index = 8):
+/// Decrements the minimum focused tag. Requires an integer parameter
+/// specifying the a tag number to wrap around. Examples (wrap_index = 8):
 /// - 0010_0000 -> 0100_0000: tag decremented
 /// - 0100_0010 -> 1000_0010: only minimum tag gets decremented
 /// - 1000_0000 -> 0000_0001: decrement and wrap around
-pub fn decrementMinFocusedTag(
+pub fn decrementFocusedTags(
     seat: *Seat,
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!void {
-    return shiftMinFocusedTag(seat, args, out, false);
+    _ = out;
+    return shiftFocusedTags(seat, args, false);
 }
 
-/// Increments the minimum view tag. Requires an integer parameter specifying the
-/// a tag number to wrap around. Examples (wrap_index = 8):
+/// Increments the minimum view tag. Requires an integer parameter
+/// specifying the a tag number to wrap around. Examples (wrap_index = 8):
 /// - 0010_0000 -> 0001_0000: tag incremented
 /// - 0100_0010 -> 0010_0010: only minimum tag gets incremented
 /// - 0000_0001 -> 1000_0000: increment and wrap around
-pub fn incrementMinViewTag(
+pub fn incrementViewTags(
     seat: *Seat,
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!void {
-    return shiftMinViewTag(seat, args, out, true);
+    _ = out;
+    return shiftViewTags(seat, args, true);
 }
 
-/// Decrements the minimum view tag. Requires an integer parameter specifying the
-/// a tag number to wrap around. Examples (wrap_index = 8):
+/// Decrements the minimum view tag. Requires an integer parameter
+/// specifying the a tag number to wrap around. Examples (wrap_index = 8):
 /// - 0010_0000 -> 0100_0000: tag decremented
 /// - 0100_0010 -> 1000_0010: only minimum tag gets decremented
 /// - 1000_0000 -> 0000_0001: decrement and wrap around
-pub fn decrementMinViewTag(
+pub fn decrementViewTags(
     seat: *Seat,
     args: []const [:0]const u8,
     out: *?[]const u8,
 ) Error!void {
-    return shiftMinViewTag(seat, args, out, false);
+    _ = out;
+    return shiftViewTags(seat, args, false);
 }
 
-// Private Functions
+// Private functions
 
-/// If `increment` is true, the minimum tag is incremented, otherwise it is decremented.
-fn shiftMinFocusedTag(
+/// If `increment` is true, the minimum tag is incremented, otherwise it
+/// is decremented.
+fn shiftFocusedTags(
     seat: *Seat,
     args: []const [:0]const u8,
-    out: *?[]const u8,
     increment: bool,
 ) Error!void {
     const output = seat.focused_output orelse return;
     const old_tags = output.pending.tags;
-    const new_tags = try shiftMinTag(args, out, old_tags, increment);
+    const new_tags = try shiftTags(args, old_tags, increment);
 
     // switch focus to the passed tags
     if (output.pending.tags != new_tags) {
@@ -98,11 +102,11 @@ fn shiftMinFocusedTag(
     }
 }
 
-/// If `increment` is true, the minimum tag is incremented, otherwise it is decremented.
-fn shiftMinViewTag(
+/// If `increment` is true, the minimum tag is incremented, otherwise it
+/// is decremented.
+fn shiftViewTags(
     seat: *Seat,
     args: []const [:0]const u8,
-    out: *?[]const u8,
     increment: bool,
 ) Error!void {
     if (seat.focused != .view) {
@@ -110,90 +114,49 @@ fn shiftMinViewTag(
     }
     const view = seat.focused.view;
     const old_tags = view.pending.tags;
-    const new_tags = try shiftMinTag(args, out, old_tags, increment);
+    const new_tags = try shiftTags(args, old_tags, increment);
 
     // set the tags of the focused view.
     view.pending.tags = new_tags;
     server.root.applyPending();
 }
 
-/// If `increment` is true, the minimum tag is incremented, otherwise it is decremented.
-fn shiftMinTag(
+/// If `increment` is true, the minimum tag is incremented, otherwise it
+/// is decremented.
+/// Returns new shifted tags.
+fn shiftTags(
     args: []const [:0]const u8,
-    out: *?[]const u8,
     old_tags: u32,
     increment: bool,
 ) Error!u32 {
-    const wrap_index = try parseWrapIndex(args, out);
+    const wrap_index: u5 = try parseWrapIndex(args);
 
-    const lowest_tag_index = leastSignificantBitIndex(old_tags) catch {
-        out.* = try std.fmt.allocPrint(util.gpa, "can't shift when tags == 0", .{});
-        return Error.Other;
-    };
-
-    var shifted_tag_index = lowest_tag_index;
+    var new_tags = old_tags;
     if (increment) {
-        shifted_tag_index = shifted_tag_index + 1;
-        shifted_tag_index = shifted_tag_index % wrap_index;
-    } else {
-        if (shifted_tag_index == 0) {
-            shifted_tag_index = wrap_index - 1;
-        } else {
-            shifted_tag_index = shifted_tag_index - 1;
+        new_tags = new_tags << 1;
+        if (wrap_index != 0) {
+            const wrapped_tag: u32 = (old_tags >> (wrap_index - 1)) & 1;
+            new_tags |= wrapped_tag;
+        }
+    } else { // decrement
+        new_tags = new_tags >> 1;
+        if (wrap_index != 0) {
+            const wrapped_tag = (old_tags & 1) << (wrap_index - 1);
+            new_tags |= wrapped_tag;
         }
     }
-
-    const one_u32: u32 = 1;
-    var new_tags = old_tags ^ (one_u32 << lowest_tag_index); // unset lowest tag
-    new_tags = new_tags | (one_u32 << shifted_tag_index); // replace with shifted tag
 
     return new_tags;
 }
 
-/// Returns the index of the least significant bit set in `in`.
-/// Returns `Error.Other` if the there are no bits set in `in`.
-fn leastSignificantBitIndex(in: u32) Error!u5 {
-    if (in == 0) {
-        return Error.Other;
-    }
-
-    var bits = in;
-    var smallest_bit_index: u5 = 0;
-    while ((bits & 1) == 0) {
-        bits >>= 1;
-        smallest_bit_index += 1;
-    }
-    return smallest_bit_index;
-}
-
-test "leastSignificantBitIndex 0" {
-    const t1 = leastSignificantBitIndex(0);
-    try expect(t1 == 0);
-}
-
-test "leastSignificantBitIndex 1 bit set" {
-    const t2 = leastSignificantBitIndex(0b0010_0000);
-    try expect(t2 == 0b0010_0000);
-}
-
-test "leastSignificantBitIndex 2 bits set" {
-    const t3 = leastSignificantBitIndex(0b1010);
-    try expect(t3 == 0b0010);
-}
-
+/// Returning a value of 0 indicates that no wrapping should happen.
+/// If the argument is >= 32, an int parsing error is returned because
+/// the tags we are shifting are represented as u32.
 fn parseWrapIndex(
     args: []const [:0]const u8,
-    out: *?[]const u8,
 ) Error!u5 {
-    if (args.len < 2) return Error.NotEnoughArguments;
     if (args.len > 2) return Error.TooManyArguments;
-
-    const wrap_index = try std.fmt.parseInt(u5, args[1], 10);
-
-    if (wrap_index == 0) {
-        out.* = try std.fmt.allocPrint(util.gpa, "wrap index must not be 0", .{});
-        return Error.Other;
-    }
-
-    return wrap_index;
+    // this argument is optional. 0 indicates no wrapping should happen.
+    if (args.len < 2) return 0;
+    return try std.fmt.parseInt(u5, args[1], 10);
 }
