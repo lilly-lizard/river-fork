@@ -94,9 +94,8 @@ fn shiftFocusedTags(
     const old_tags = output.pending.tags;
     const new_tags = try shiftTags(args, old_tags, increment);
 
-    // switch focus to the passed tags
-    if (output.pending.tags != new_tags) {
-        output.previous_tags = output.pending.tags;
+    if (new_tags != 0) {
+        output.previous_tags = old_tags;
         output.pending.tags = new_tags;
         server.root.applyPending();
     }
@@ -116,9 +115,10 @@ fn shiftViewTags(
     const old_tags = view.pending.tags;
     const new_tags = try shiftTags(args, old_tags, increment);
 
-    // set the tags of the focused view.
-    view.pending.tags = new_tags;
-    server.root.applyPending();
+    if (new_tags != 0) {
+        view.pending.tags = new_tags;
+        server.root.applyPending();
+    }
 }
 
 /// If `increment` is true, the minimum tag is incremented, otherwise it
@@ -135,8 +135,10 @@ fn shiftTags(
     if (increment) {
         new_tags = new_tags << 1;
         if (wrap_index != 0) {
-            const wrapped_tag: u32 = (old_tags >> (wrap_index - 1)) & 1;
+            const wrapped_tag = (old_tags >> (wrap_index - 1)) & 1;
+            const unwrapped_tag = @as(u32, 1) << wrap_index;
             new_tags |= wrapped_tag;
+            new_tags &= ~unwrapped_tag;
         }
     } else { // decrement
         new_tags = new_tags >> 1;
