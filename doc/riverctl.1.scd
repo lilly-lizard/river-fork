@@ -153,6 +153,22 @@ are ignored by river.
 	Assign the currently focused view the previous tags of the currently
 	focused output.
 
+*increment-focused-tags* _wrap_around_
+	Increments the focused tags. If a tag increments to the value of optional
+	argument _wrap_around_, then it instead becomes tag 0.
+
+*decrement-focused-tags* _wrap_around_
+	Decrements the focused tags. If a tag decrements below 0, it is either
+	unset, or set to the optional argument _wrap_around_.
+
+*increment-view-tags* _wrap_around_
+	Increments the view tags. If a tag increments to the value of optional
+	argument _wrap_around_, then it instead becomes tag 0.
+
+*decrement-view-tags* _wrap_around_
+	Decrements the view tags. If a tag decrements below 0, it is either
+	unset, or set to the optional argument _wrap_around_.
+
 ## MAPPINGS
 
 Mappings are modal in river. Each mapping is associated with a mode and

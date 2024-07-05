@@ -14,6 +14,10 @@ function __riverctl_completion ()
 			exit \
 			focus-output \
 			focus-view \
+			increment-focused-tags \
+			decrement-focused-tags \
+			increment-view-tags \
+			decrement-view-tags \
 			input \
 			list-inputs \
 			list-input-configs \

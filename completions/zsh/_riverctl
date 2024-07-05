@@ -36,6 +36,10 @@ _riverctl_commands()
         'spawn-tagmask:Set a tagmask to filter the tags assigned to newly spawned views on the focused output'
         'focus-previous-tags:Sets tags to their previous value on the focused output'
         'send-to-previous-tags:Assign the currently focused view the previous tags of the focused output'
+        'increment-focused-tags:Increments the focused tags'
+        'decrement-focused-tags:Decrements the focused tags'
+        'increment-view-tags:Increments the view tags'
+        'decrement-view-tags:Decrements the view tags'
         # Mappings
         'declare-mode:Create a new mode'
         'enter-mode:Switch to given mode if it exists'
