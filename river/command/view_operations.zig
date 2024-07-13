@@ -19,6 +19,7 @@ const assert = std.debug.assert;
 const wlr = @import("wlroots");
 const flags = @import("flags");
 
+const log = std.log;
 const server = &@import("../main.zig").server;
 
 const Direction = @import("../command.zig").Direction;
@@ -50,9 +51,14 @@ pub fn focusView(
         result.args[0],
         if (result.flags.@"skip-floating") .skip_float else .all,
     )) |target| {
+        log.info("> focusing target", .{});
         assert(!target.pending.fullscreen);
         seat.focus(target);
         if (target.pending.output != seat.focused_output) {
+            log.info("> focus different output", .{});
+            seat.focusOutput(target.pending.output);
+        } else {
+            log.info("> focus same output", .{});
             seat.focusOutput(target.pending.output);
         }
         server.root.applyPending();
@@ -129,14 +135,52 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
         const focus_position = Vector.positionOfBox(seat.focused.view.current.box);
         var target: ?*View = null;
         var target_distance: usize = std.math.maxInt(usize);
-        getTargetFromOutput(seat, focused_output, target_mode, focus_position, direction, &target, &target_distance);
+
+        var it = focused_output.pending.wm_stack.iterator(.forward);
+        while (it.next()) |view| {
+            if (focused_output.pending.tags & view.pending.tags == 0) continue;
+            if (target_mode == .skip_float and view.pending.float) continue;
+            if (view == seat.focused.view) continue;
+            const view_position = Vector.positionOfBox(view.current.box);
+            const position_diff = focus_position.diff(view_position);
+            if ((position_diff.direction() orelse continue) != direction) continue;
+            const distance = position_diff.length();
+            if (distance < target_distance) {
+                target = view;
+                target_distance = distance;
+            }
+        }
+
         if (target != null) {
+            log.info(">> local target found", .{});
             // prefer a target from current output
-            //return target;
+            return target;
+        } else {
+            log.info(">> local target not found", .{});
         }
         // check adjacent output
         const next_output: *Output = (try getOutput(seat, direction_str)) orelse return target;
-        getTargetFromOutput(seat, next_output, target_mode, focus_position, direction, &target, &target_distance);
+        log.info(">> adjacent output found", .{});
+
+        it = next_output.pending.wm_stack.iterator(.forward);
+        while (it.next()) |view| {
+            if (next_output.pending.tags & view.pending.tags == 0) continue;
+            if (target_mode == .skip_float and view.pending.float) continue;
+            if (view == seat.focused.view) continue;
+            const view_position = Vector.positionOfBox(view.current.box);
+            const position_diff = focus_position.diff(view_position);
+            const distance = position_diff.length();
+            if (distance < target_distance) {
+                target = view;
+                target_distance = distance;
+            }
+        }
+
+        if (target != null) {
+            log.info(">> adjacent target found", .{});
+        } else {
+            log.info(">> adjacent target not found", .{});
+        }
         return target;
     }
 
