@@ -94,7 +94,7 @@ pub fn sendToOutput(
 
 /// Find an output adjacent to the currently focused based on either logical or
 /// spacial direction
-fn getOutput(seat: *Seat, str: []const u8) !?*Output {
+pub fn getOutput(seat: *Seat, str: []const u8) !?*Output {
     if (std.meta.stringToEnum(Direction, str)) |direction| { // Logical direction
         // Return the next/prev output in the list
         var link = &seat.focused_output.?.active_link;

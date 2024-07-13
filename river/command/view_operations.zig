@@ -28,6 +28,8 @@ const Seat = @import("../Seat.zig");
 const View = @import("../View.zig");
 const Vector = @import("../Vector.zig");
 
+const getOutput = @import("output.zig").getOutput;
+
 /// Focus either the next or the previous visible view, depending on the enum
 /// passed. Does nothing if there are 1 or 0 views in the stack.
 pub fn focusView(
@@ -50,6 +52,9 @@ pub fn focusView(
     )) |target| {
         assert(!target.pending.fullscreen);
         seat.focus(target);
+        if (target.pending.output != seat.focused_output) {
+            seat.focusOutput(target.pending.output);
+        }
         server.root.applyPending();
     }
 }
@@ -77,11 +82,11 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
     if (seat.focused != .view) return null;
     if (seat.focused.view.pending.fullscreen) return null;
     if (target_mode == .skip_float and seat.focused.view.pending.float) return null;
-    const output = seat.focused_output orelse return null;
+    const focused_output = seat.focused_output orelse return null;
 
     // If no currently view is focused, focus the first in the stack.
     if (seat.focused != .view) {
-        var it = output.pending.wm_stack.iterator(.forward);
+        var it = focused_output.pending.wm_stack.iterator(.forward);
         return it.next();
     }
 
@@ -93,7 +98,7 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
                     .next => .forward,
                     .previous => .reverse,
                 };
-                var it = output.pending.wm_stack.iterator(it_dir);
+                var it = focused_output.pending.wm_stack.iterator(it_dir);
                 while (it.next()) |view| {
                     if (view == seat.focused.view) break;
                 } else {
@@ -103,7 +108,7 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
                 // Return the next view in the stack matching the tags if any.
                 while (it.next()) |view| {
                     if (target_mode == .skip_float and view.pending.float) continue;
-                    if (output.pending.tags & view.pending.tags != 0) return view;
+                    if (focused_output.pending.tags & view.pending.tags != 0) return view;
                 }
 
                 // Wrap and return the first view in the stack matching the tags if
@@ -111,7 +116,7 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
                 while (it.next()) |view| {
                     if (view == seat.focused.view) return null;
                     if (target_mode == .skip_float and view.pending.float) continue;
-                    if (output.pending.tags & view.pending.tags != 0) return view;
+                    if (focused_output.pending.tags & view.pending.tags != 0) return view;
                 }
 
                 unreachable;
@@ -124,22 +129,33 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
         const focus_position = Vector.positionOfBox(seat.focused.view.current.box);
         var target: ?*View = null;
         var target_distance: usize = std.math.maxInt(usize);
-        var it = output.pending.wm_stack.iterator(.forward);
-        while (it.next()) |view| {
-            if (output.pending.tags & view.pending.tags == 0) continue;
-            if (target_mode == .skip_float and view.pending.float) continue;
-            if (view == seat.focused.view) continue;
-            const view_position = Vector.positionOfBox(view.current.box);
-            const position_diff = focus_position.diff(view_position);
-            if ((position_diff.direction() orelse continue) != direction) continue;
-            const distance = position_diff.length();
-            if (distance < target_distance) {
-                target = view;
-                target_distance = distance;
-            }
+        getTargetFromOutput(seat, focused_output, target_mode, focus_position, direction, &target, &target_distance);
+        if (target != null) {
+            // prefer a target from current output
+            //return target;
         }
+        // check adjacent output
+        const next_output: *Output = (try getOutput(seat, direction_str)) orelse return target;
+        getTargetFromOutput(seat, next_output, target_mode, focus_position, direction, &target, &target_distance);
         return target;
     }
 
     return Error.InvalidDirection;
+}
+
+fn getTargetFromOutput(seat: *Seat, output: *Output, target_mode: TargetMode, focus_position: Vector, direction: wlr.OutputLayout.Direction, target: *?*View, target_distance: *usize) void {
+    var it = output.pending.wm_stack.iterator(.forward);
+    while (it.next()) |view| {
+        if (output.pending.tags & view.pending.tags == 0) continue;
+        if (target_mode == .skip_float and view.pending.float) continue;
+        if (view == seat.focused.view) continue;
+        const view_position = Vector.positionOfBox(view.current.box);
+        const position_diff = focus_position.diff(view_position);
+        if ((position_diff.direction() orelse continue) != direction) continue;
+        const distance = position_diff.length();
+        if (distance < target_distance.*) {
+            target.* = view;
+            target_distance.* = distance;
+        }
+    }
 }
