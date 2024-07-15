@@ -51,14 +51,8 @@ pub fn focusView(
         result.args[0],
         if (result.flags.@"skip-floating") .skip_float else .all,
     )) |target| {
-        log.info("> focusing target", .{});
-        assert(!target.pending.fullscreen);
         seat.focus(target);
         if (target.pending.output != seat.focused_output) {
-            log.info("> focus different output", .{});
-            seat.focusOutput(target.pending.output);
-        } else {
-            log.info("> focus same output", .{});
             seat.focusOutput(target.pending.output);
         }
         server.root.applyPending();
@@ -76,7 +70,6 @@ pub fn swap(
 
     if (try getTarget(seat, args[1], .skip_float)) |target| {
         assert(!target.pending.float);
-        assert(!target.pending.fullscreen);
         seat.focused.view.pending_wm_stack_link.swapWith(&target.pending_wm_stack_link);
         seat.cursor.may_need_warp = true;
         server.root.applyPending();
@@ -86,7 +79,6 @@ pub fn swap(
 const TargetMode = enum { all, skip_float };
 fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?*View {
     if (seat.focused != .view) return null;
-    if (seat.focused.view.pending.fullscreen) return null;
     if (target_mode == .skip_float and seat.focused.view.pending.float) return null;
     const focused_output = seat.focused_output orelse return null;
 
@@ -136,6 +128,10 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
         var target: ?*View = null;
         var target_distance: usize = std.math.maxInt(usize);
 
+        var x = focused_output.scene_output.x;
+        var y = focused_output.scene_output.y;
+        log.info(">>> focused output x = {x}, y = {x}", .{ x, y });
+
         var it = focused_output.pending.wm_stack.iterator(.forward);
         while (it.next()) |view| {
             if (focused_output.pending.tags & view.pending.tags == 0) continue;
@@ -162,13 +158,19 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
         const next_output: *Output = (try getOutput(seat, direction_str)) orelse return target;
         log.info(">> adjacent output found", .{});
 
+        x = next_output.scene_output.x;
+        y = next_output.scene_output.y;
+        log.info(">>> adjacent output x = {x}, y = {x}", .{ x, y });
+
         it = next_output.pending.wm_stack.iterator(.forward);
         while (it.next()) |view| {
             if (next_output.pending.tags & view.pending.tags == 0) continue;
             if (target_mode == .skip_float and view.pending.float) continue;
             if (view == seat.focused.view) continue;
             const view_position = Vector.positionOfBox(view.current.box);
+            log.info(">>>> potential view x = {x}, y = {x}", .{ view_position.x, view_position.y });
             const position_diff = focus_position.diff(view_position);
+            log.info(">>>> potential view diff x = {x}, y = {x}", .{ position_diff.x, position_diff.y });
             const distance = position_diff.length();
             if (distance < target_distance) {
                 target = view;
