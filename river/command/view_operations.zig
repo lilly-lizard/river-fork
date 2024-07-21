@@ -128,10 +128,6 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
         var target: ?*View = null;
         var target_distance: usize = std.math.maxInt(usize);
 
-        var x = focused_output.scene_output.x;
-        var y = focused_output.scene_output.y;
-        log.info(">>> focused output x = {x}, y = {x}", .{ x, y });
-
         var it = focused_output.pending.wm_stack.iterator(.forward);
         while (it.next()) |view| {
             if (focused_output.pending.tags & view.pending.tags == 0) continue;
@@ -148,28 +144,34 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
         }
 
         if (target != null) {
-            log.info(">> local target found", .{});
             // prefer a target from current output
             return target;
-        } else {
-            log.info(">> local target not found", .{});
-        }
+        } else {}
         // check adjacent output
         const next_output: *Output = (try getOutput(seat, direction_str)) orelse return target;
         log.info(">> adjacent output found", .{});
 
-        x = next_output.scene_output.x;
-        y = next_output.scene_output.y;
-        log.info(">>> adjacent output x = {x}, y = {x}", .{ x, y });
+        const output_x_diff = focused_output.scene_output.x - next_output.scene_output.x;
+        const output_y_diff = focused_output.scene_output.y - next_output.scene_output.y;
+        const output_diff = Vector{
+            .x = output_x_diff,
+            .y = output_y_diff,
+        };
 
         it = next_output.pending.wm_stack.iterator(.forward);
         while (it.next()) |view| {
             if (next_output.pending.tags & view.pending.tags == 0) continue;
+            if (seat.focused.view.pending.fullscreen) {
+                // prioritize targetting fullscreen views
+                target = view;
+                target_distance = 0;
+                break;
+            }
             if (target_mode == .skip_float and view.pending.float) continue;
             if (view == seat.focused.view) continue;
             const view_position = Vector.positionOfBox(view.current.box);
             log.info(">>>> potential view x = {x}, y = {x}", .{ view_position.x, view_position.y });
-            const position_diff = focus_position.diff(view_position);
+            const position_diff = focus_position.diff(view_position).diff(output_diff);
             log.info(">>>> potential view diff x = {x}, y = {x}", .{ position_diff.x, position_diff.y });
             const distance = position_diff.length();
             if (distance < target_distance) {
@@ -178,11 +180,6 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
             }
         }
 
-        if (target != null) {
-            log.info(">> adjacent target found", .{});
-        } else {
-            log.info(">> adjacent target not found", .{});
-        }
         return target;
     }
 
