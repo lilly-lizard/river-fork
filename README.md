@@ -60,7 +60,7 @@ distribution.
 - [zig](https://ziglang.org/download/) 0.13
 - wayland
 - wayland-protocols
-- [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.17.2
+- [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.18
 - xkbcommon
 - libevdev
 - pixman
@@ -72,6 +72,7 @@ Then run, for example:
 zig build -Doptimize=ReleaseSafe --prefix ~/.local install
 ```
 To enable Xwayland support pass the `-Dxwayland` option as well.
+Run `zig build -h` to see a list of all options.
 
 ## Usage
 
