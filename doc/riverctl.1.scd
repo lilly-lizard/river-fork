@@ -323,11 +323,16 @@ matches everything while _\*\*_ and the empty string are invalid.
 	- *fullscreen*: Make the view fullscreen. Applies only to new views.
 	- *no-fullscreen*: Don't make the view fullscreen. Applies only to
 	  new views.
+	- *tearing*: Allow the view to tear when fullscreen regardless of the
+	  view's preference. Applies to new and existing views.
+	- *no-tearing*: Disable tearing for the view regardless of the view's
+	  preference. Applies to new and existing views.
 
 	Both *float* and *no-float* rules are added to the same list,
 	which means that adding a *no-float* rule with the same arguments
 	as a *float* rule will overwrite it. The same holds for *ssd* and
-	*csd*, *fullscreen* and *no-fullscreen* rules.
+	*csd*, *fullscreen* and *no-fullscreen*, *tearing* and
+	*no-tearing* rules.
 
 	If multiple rules in a list match a given view the most specific
 	rule will be applied. For example with the following rules
@@ -379,6 +384,10 @@ matches everything while _\*\*_ and the empty string are invalid.
 *output-attach-mode* *top*|*bottom*|*above*|*below*|*after <N>*
 	Set the attach mode of the currently focused output, overriding the value of
 	default-attach-mode if any.
+
+*allow-tearing* *enabled*|*disabled*
+	Allow fullscreen views to tear if requested by the view. See also the
+	*tearing* rule to force enable tearing for specific views.
 
 *background-color* _0xRRGGBB_|_0xRRGGBBAA_
 	Set the background color.
