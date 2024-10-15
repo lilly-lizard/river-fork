@@ -92,11 +92,12 @@ pub fn build(b: *Build) !void {
     const scanner = Scanner.create(b, .{});
 
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
+    scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
     scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
     scanner.addSystemProtocol("staging/ext-session-lock/ext-session-lock-v1.xml");
+    scanner.addSystemProtocol("staging/tearing-control/tearing-control-v1.xml");
     scanner.addSystemProtocol("unstable/pointer-constraints/pointer-constraints-unstable-v1.xml");
     scanner.addSystemProtocol("unstable/pointer-gestures/pointer-gestures-unstable-v1.xml");
-    scanner.addSystemProtocol("unstable/tablet/tablet-unstable-v2.xml");
     scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
 
     scanner.addCustomProtocol("protocol/river-control-unstable-v1.xml");
@@ -124,6 +125,7 @@ pub fn build(b: *Build) !void {
     scanner.generate("zxdg_decoration_manager_v1", 1);
     scanner.generate("ext_session_lock_manager_v1", 1);
     scanner.generate("wp_cursor_shape_manager_v1", 1);
+    scanner.generate("wp_tearing_control_manager_v1", 1);
 
     scanner.generate("zriver_control_v1", 1);
     scanner.generate("zriver_status_manager_v1", 4);
@@ -146,7 +148,7 @@ pub fn build(b: *Build) !void {
     // exposed to the wlroots module for @cImport() to work. This seems to be
     // the best way to do so with the current std.Build API.
     wlroots.resolved_target = target;
-    wlroots.linkSystemLibrary("wlroots", .{});
+    wlroots.linkSystemLibrary("wlroots-0.18", .{});
 
     const flags = b.createModule(.{ .root_source_file = b.path("common/flags.zig") });
     const globber = b.createModule(.{ .root_source_file = b.path("common/globber.zig") });
@@ -167,7 +169,7 @@ pub fn build(b: *Build) !void {
         river.linkSystemLibrary("libevdev");
         river.linkSystemLibrary("libinput");
         river.linkSystemLibrary("wayland-server");
-        river.linkSystemLibrary("wlroots");
+        river.linkSystemLibrary("wlroots-0.18");
         river.linkSystemLibrary("xkbcommon");
         river.linkSystemLibrary("pixman-1");
 

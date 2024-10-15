@@ -215,6 +215,18 @@ pub const ScrollButton = struct {
     }
 };
 
+pub const ScrollButtonLock = enum {
+    enabled,
+    disabled,
+
+    fn apply(scroll_button_lock: ScrollButtonLock, device: *c.libinput_device) void {
+        _ = c.libinput_device_config_scroll_set_button_lock(device, switch (scroll_button_lock) {
+            .enabled => c.LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_ENABLED,
+            .disabled => c.LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_DISABLED,
+        });
+    }
+};
+
 pub const MapToOutput = struct {
     output_name: ?[]const u8,
 
@@ -232,7 +244,7 @@ pub const MapToOutput = struct {
         };
 
         switch (device.wlr_device.type) {
-            .pointer, .touch, .tablet_tool => {
+            .pointer, .touch, .tablet => {
                 log.debug("mapping input '{s}' -> '{s}'", .{
                     device.identifier,
                     if (wlr_output) |o| o.name else "<no output>",
@@ -240,14 +252,14 @@ pub const MapToOutput = struct {
 
                 device.seat.cursor.wlr_cursor.mapInputToOutput(device.wlr_device, wlr_output);
 
-                if (device.wlr_device.type == .tablet_tool) {
+                if (device.wlr_device.type == .tablet) {
                     const tablet: *Tablet = @fieldParentPtr("device", device);
                     tablet.output_mapping = wlr_output;
                 }
             },
 
             // These devices do not support being mapped to outputs.
-            .keyboard, .tablet_pad, .switch_device => {},
+            .keyboard, .tablet_pad, .@"switch" => {},
         }
     }
 };
@@ -279,6 +291,7 @@ tap: ?TapState = null,
 @"pointer-accel": ?PointerAccel = null,
 @"scroll-method": ?ScrollMethod = null,
 @"scroll-button": ?ScrollButton = null,
+@"scroll-button-lock": ?ScrollButtonLock = null,
 @"map-to-output": ?MapToOutput = null,
 
 pub fn deinit(config: *InputConfig) void {

@@ -117,7 +117,7 @@ transaction_timeout: *wl.EventSource,
 pending_state_dirty: bool = false,
 
 pub fn init(root: *Root) !void {
-    const output_layout = try wlr.OutputLayout.create();
+    const output_layout = try wlr.OutputLayout.create(server.wl_server);
     errdefer output_layout.destroy();
 
     const scene = try wlr.Scene.create();
@@ -130,9 +130,6 @@ pub fn init(root: *Root) !void {
 
     const outputs = try interactive_content.createSceneTree();
     const override_redirect = if (build_options.xwayland) try interactive_content.createSceneTree();
-
-    const presentation = try wlr.Presentation.create(server.wl_server, server.backend);
-    scene.setPresentation(presentation);
 
     const event_loop = server.wl_server.getEventLoop();
     const transaction_timeout = try event_loop.addTimer(*Root, handleTransactionTimeout, root);
@@ -166,7 +163,7 @@ pub fn init(root: *Root) !void {
         .all_outputs = undefined,
         .active_outputs = undefined,
 
-        .presentation = presentation,
+        .presentation = try wlr.Presentation.create(server.wl_server, server.backend),
         .xdg_output_manager = try wlr.XdgOutputManagerV1.create(server.wl_server, output_layout),
         .output_manager = try wlr.OutputManagerV1.create(server.wl_server),
         .power_manager = try wlr.OutputPowerManagerV1.create(server.wl_server),
@@ -676,24 +673,12 @@ fn commitTransaction(root: *Root) void {
         while (focus_stack_it.next()) |view| {
             assert(view.inflight.output == output);
 
-            if (view.current.output != view.inflight.output or
-                (output.current.fullscreen == view and output.inflight.fullscreen != view))
-            {
-                if (view.inflight.float) {
-                    view.tree.node.reparent(output.layers.float);
-                } else {
-                    view.tree.node.reparent(output.layers.layout);
-                }
-                view.popup_tree.node.reparent(output.layers.popups);
+            if (view.inflight.float) {
+                view.tree.node.reparent(output.layers.float);
+            } else {
+                view.tree.node.reparent(output.layers.layout);
             }
-
-            if (view.current.float != view.inflight.float) {
-                if (view.inflight.float) {
-                    view.tree.node.reparent(output.layers.float);
-                } else {
-                    view.tree.node.reparent(output.layers.layout);
-                }
-            }
+            view.popup_tree.node.reparent(output.layers.popups);
 
             view.commitTransaction();
 
@@ -706,15 +691,13 @@ fn commitTransaction(root: *Root) void {
             }
         }
 
-        if (output.inflight.fullscreen != output.current.fullscreen) {
-            if (output.inflight.fullscreen) |view| {
-                assert(view.inflight.output == output);
-                assert(view.current.output == output);
-                view.tree.node.reparent(output.layers.fullscreen);
-            }
-            output.current.fullscreen = output.inflight.fullscreen;
-            output.layers.fullscreen.node.setEnabled(output.current.fullscreen != null);
+        if (output.inflight.fullscreen) |view| {
+            assert(view.inflight.output == output);
+            assert(view.current.output == output);
+            view.tree.node.reparent(output.layers.fullscreen);
         }
+        output.current.fullscreen = output.inflight.fullscreen;
+        output.layers.fullscreen.node.setEnabled(output.current.fullscreen != null);
 
         output.status.handleTransactionCommit(output);
     }
