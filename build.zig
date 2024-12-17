@@ -100,11 +100,11 @@ pub fn build(b: *Build) !void {
     scanner.addSystemProtocol("unstable/pointer-gestures/pointer-gestures-unstable-v1.xml");
     scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
 
-    scanner.addCustomProtocol("protocol/river-control-unstable-v1.xml");
-    scanner.addCustomProtocol("protocol/river-status-unstable-v1.xml");
-    scanner.addCustomProtocol("protocol/river-layout-v3.xml");
-    scanner.addCustomProtocol("protocol/wlr-layer-shell-unstable-v1.xml");
-    scanner.addCustomProtocol("protocol/wlr-output-power-management-unstable-v1.xml");
+    scanner.addCustomProtocol(b.path("protocol/river-control-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/river-status-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/river-layout-v3.xml"));
+    scanner.addCustomProtocol(b.path("protocol/wlr-layer-shell-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/wlr-output-power-management-unstable-v1.xml"));
 
     // Some of these versions may be out of date with what wlroots implements.
     // This is not a problem in practice though as long as river successfully compiles.
