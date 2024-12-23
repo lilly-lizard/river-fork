@@ -185,9 +185,6 @@ pub fn build(b: *Build) !void {
             .flags = &.{ "-std=c99", "-O2" },
         });
 
-        // TODO: remove when zig issue #131 is implemented
-        scanner.addCSource(river);
-
         river.pie = pie;
         river.root_module.omit_frame_pointer = omit_frame_pointer;
 
@@ -211,8 +208,6 @@ pub fn build(b: *Build) !void {
         riverctl.linkLibC();
         riverctl.linkSystemLibrary("wayland-client");
 
-        scanner.addCSource(riverctl);
-
         riverctl.pie = pie;
         riverctl.root_module.omit_frame_pointer = omit_frame_pointer;
 
@@ -235,8 +230,6 @@ pub fn build(b: *Build) !void {
         rivertile.root_module.addImport("wayland", wayland);
         rivertile.linkLibC();
         rivertile.linkSystemLibrary("wayland-client");
-
-        scanner.addCSource(rivertile);
 
         rivertile.pie = pie;
         rivertile.root_module.omit_frame_pointer = omit_frame_pointer;
