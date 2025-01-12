@@ -100,11 +100,11 @@ pub fn build(b: *Build) !void {
     scanner.addSystemProtocol("unstable/pointer-gestures/pointer-gestures-unstable-v1.xml");
     scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
 
-    scanner.addCustomProtocol("protocol/river-control-unstable-v1.xml");
-    scanner.addCustomProtocol("protocol/river-status-unstable-v1.xml");
-    scanner.addCustomProtocol("protocol/river-layout-v3.xml");
-    scanner.addCustomProtocol("protocol/wlr-layer-shell-unstable-v1.xml");
-    scanner.addCustomProtocol("protocol/wlr-output-power-management-unstable-v1.xml");
+    scanner.addCustomProtocol(b.path("protocol/river-control-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/river-status-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/river-layout-v3.xml"));
+    scanner.addCustomProtocol(b.path("protocol/wlr-layer-shell-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/wlr-output-power-management-unstable-v1.xml"));
 
     // Some of these versions may be out of date with what wlroots implements.
     // This is not a problem in practice though as long as river successfully compiles.
@@ -185,9 +185,6 @@ pub fn build(b: *Build) !void {
             .flags = &.{ "-std=c99", "-O2" },
         });
 
-        // TODO: remove when zig issue #131 is implemented
-        scanner.addCSource(river);
-
         river.pie = pie;
         river.root_module.omit_frame_pointer = omit_frame_pointer;
 
@@ -211,8 +208,6 @@ pub fn build(b: *Build) !void {
         riverctl.linkLibC();
         riverctl.linkSystemLibrary("wayland-client");
 
-        scanner.addCSource(riverctl);
-
         riverctl.pie = pie;
         riverctl.root_module.omit_frame_pointer = omit_frame_pointer;
 
@@ -235,8 +230,6 @@ pub fn build(b: *Build) !void {
         rivertile.root_module.addImport("wayland", wayland);
         rivertile.linkLibC();
         rivertile.linkSystemLibrary("wayland-client");
-
-        scanner.addCSource(rivertile);
 
         rivertile.pie = pie;
         rivertile.root_module.omit_frame_pointer = omit_frame_pointer;

@@ -19,6 +19,7 @@ const Server = @This();
 const build_options = @import("build_options");
 const std = @import("std");
 const assert = std.debug.assert;
+const mem = std.mem;
 const posix = std.posix;
 const wlr = @import("wlroots");
 const wl = @import("wayland").server.wl;
@@ -85,6 +86,8 @@ screencopy_manager: *wlr.ScreencopyManagerV1,
 foreign_toplevel_manager: *wlr.ForeignToplevelManagerV1,
 
 tearing_control_manager: *wlr.TearingControlManagerV1,
+
+alpha_modifier: *wlr.AlphaModifierV1,
 
 input_manager: InputManager,
 root: Root,
@@ -162,6 +165,8 @@ pub fn init(server: *Server, runtime_xwayland: bool) !void {
         .foreign_toplevel_manager = try wlr.ForeignToplevelManagerV1.create(wl_server),
 
         .tearing_control_manager = try wlr.TearingControlManagerV1.create(wl_server, 1),
+
+        .alpha_modifier = try wlr.AlphaModifierV1.create(wl_server),
 
         .config = try Config.init(),
 
@@ -295,13 +300,16 @@ fn allowlist(server: *Server, global: *const wl.Global) bool {
     // such as wl_output and wl_seat since the wl_global_create() function will
     // advertise the global to clients and invoke this filter before returning
     // the new global pointer.
-    //
+    if ((mem.orderZ(u8, global.getInterface().name, "wl_output") == .eq) or
+        (mem.orderZ(u8, global.getInterface().name, "wl_seat") == .eq))
+    {
+        return true;
+    }
+
     // For other globals I like the current pointer comparison approach as it
     // should catch river accidentally exposing multiple copies of e.g. wl_shm
     // with an assertion failure.
-    return global.getInterface() == wl.Output.getInterface() or
-        global.getInterface() == wl.Seat.getInterface() or
-        global == server.shm.global or
+    return global == server.shm.global or
         global == server.single_pixel_buffer_manager.global or
         global == server.viewporter.global or
         global == server.fractional_scale_manager.global or
@@ -321,7 +329,8 @@ fn allowlist(server: *Server, global: *const wl.Global) bool {
         global == server.input_manager.tablet_manager.global or
         global == server.input_manager.pointer_gestures.global or
         global == server.idle_inhibit_manager.wlr_manager.global or
-        global == server.tearing_control_manager.global;
+        global == server.tearing_control_manager.global or
+        global == server.alpha_modifier.global;
 }
 
 /// Returns true if the global is blocked for security contexts
