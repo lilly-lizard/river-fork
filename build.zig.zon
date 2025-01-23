@@ -8,12 +8,12 @@
             .hash = "12209db20ce873af176138b76632931def33a10539387cba745db72933c43d274d56",
         },
         .@"zig-wayland" = .{
-            .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.2.0.tar.gz",
-            .hash = "1220687c8c47a48ba285d26a05600f8700d37fc637e223ced3aa8324f3650bf52242",
+            .url = "https://codeberg.org/ifreund/zig-wayland/archive/bd8afd256fb6beed7d72e3580b00f33dea7155a1.tar.gz",
+            .hash = "1220218a0e5c2cd63a2311417f4d3f2411dd17d75815f67c704ee657bd846ecbc3e0",
         },
         .@"zig-wlroots" = .{
-            .url = "https://codeberg.org/ifreund/zig-wlroots/archive/e486223799648d27e8b91c5fe0ea4c088b74b707.tar.gz",
-            .hash = "1220aeb3317e16c38583839961c9d695fa60d23a3d506c8275fb0e8fa9849844f2f7",
+            .url = "https://codeberg.org/ifreund/zig-wlroots/archive/afbbbbe5579c750feed8de12b073fa50b0651137.tar.gz",
+            .hash = "122060ddef836b7872cb2088764a8bd2fb2e9254327673e8176b7f7a621ec897484f",
         },
         .@"zig-xkbcommon" = .{
             .url = "https://codeberg.org/ifreund/zig-xkbcommon/archive/v0.2.0.tar.gz",

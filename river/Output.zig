@@ -393,11 +393,15 @@ fn sendLayerConfigures(
                     usable_box.* = new_usable_box;
                 }
 
-                layer_surface.popup_tree.node.setPosition(
-                    layer_surface.scene_layer_surface.tree.node.x,
-                    layer_surface.scene_layer_surface.tree.node.y,
-                );
-                layer_surface.scene_layer_surface.tree.node.subsurfaceTreeSetClip(&full_box);
+                const x = layer_surface.scene_layer_surface.tree.node.x;
+                const y = layer_surface.scene_layer_surface.tree.node.y;
+                layer_surface.popup_tree.node.setPosition(x, y);
+                layer_surface.scene_layer_surface.tree.node.subsurfaceTreeSetClip(&.{
+                    .x = -x,
+                    .y = -y,
+                    .width = full_box.width,
+                    .height = full_box.height,
+                });
             }
         }
     }
@@ -538,6 +542,13 @@ fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
 }
 
 fn renderAndCommit(output: *Output, scene_output: *wlr.SceneOutput) !void {
+    // TODO(wlroots): replace this with wlr_scene_output_needs_frame()
+    if (!output.wlr_output.needs_frame and !output.gamma_dirty and
+        !scene_output.pending_commit_damage.notEmpty())
+    {
+        return;
+    }
+
     var state = wlr.Output.State.init();
     defer state.finish();
 
@@ -547,7 +558,9 @@ fn renderAndCommit(output: *Output, scene_output: *wlr.SceneOutput) !void {
         const control = server.root.gamma_control_manager.getControl(output.wlr_output);
         if (!wlr.GammaControlV1.apply(control, &state)) return error.OutOfMemory;
 
-        if (!output.wlr_output.testState(&state)) {
+        // TODO(wlroots): remove this isHeadless() workaround after upstream fix is available
+        // in a release: https://gitlab.freedesktop.org/wlroots/wlroots/-/merge_requests/4868
+        if (!output.wlr_output.testState(&state) or output.wlr_output.isHeadless()) {
             wlr.GammaControlV1.sendFailedAndDestroy(control);
             state.clearGammaLut();
             // If the backend does not support gamma LUTs it will reject any
