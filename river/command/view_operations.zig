@@ -149,7 +149,6 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
         } else {}
         // check adjacent output
         const next_output: *Output = (try getOutput(seat, direction_str)) orelse return target;
-        log.info(">> adjacent output found", .{});
 
         const output_x_diff = focused_output.scene_output.x - next_output.scene_output.x;
         const output_y_diff = focused_output.scene_output.y - next_output.scene_output.y;
@@ -170,9 +169,7 @@ fn getTarget(seat: *Seat, direction_str: []const u8, target_mode: TargetMode) !?
             if (target_mode == .skip_float and view.pending.float) continue;
             if (view == seat.focused.view) continue;
             const view_position = Vector.positionOfBox(view.current.box);
-            log.info(">>>> potential view x = {x}, y = {x}", .{ view_position.x, view_position.y });
             const position_diff = focus_position.diff(view_position).diff(output_diff);
-            log.info(">>>> potential view diff x = {x}, y = {x}", .{ position_diff.x, position_diff.y });
             const distance = position_diff.length();
             if (distance < target_distance) {
                 target = view;
