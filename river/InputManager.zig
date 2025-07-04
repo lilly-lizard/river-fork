@@ -58,7 +58,7 @@ tablet_manager: *wlr.TabletManagerV2,
 configs: std.ArrayList(InputConfig),
 
 devices: wl.list.Head(InputDevice, .link),
-seats: std.TailQueue(Seat) = .{},
+seats: std.DoublyLinkedList(Seat) = .{},
 
 exclusive_client: ?*wl.Client = null,
 
@@ -74,7 +74,7 @@ new_text_input: wl.Listener(*wlr.TextInputV3) =
     wl.Listener(*wlr.TextInputV3).init(handleNewTextInput),
 
 pub fn init(input_manager: *InputManager) !void {
-    const seat_node = try util.gpa.create(std.TailQueue(Seat).Node);
+    const seat_node = try util.gpa.create(std.DoublyLinkedList(Seat).Node);
     errdefer util.gpa.destroy(seat_node);
 
     input_manager.* = .{
@@ -160,7 +160,7 @@ pub fn reconfigureDevices(input_manager: *InputManager) void {
 fn handleNewInput(listener: *wl.Listener(*wlr.InputDevice), wlr_device: *wlr.InputDevice) void {
     const input_manager: *InputManager = @fieldParentPtr("new_input", listener);
 
-    input_manager.defaultSeat().addDevice(wlr_device);
+    input_manager.defaultSeat().addDevice(wlr_device, false);
 }
 
 fn handleNewVirtualPointer(
@@ -178,16 +178,52 @@ fn handleNewVirtualPointer(
         log.debug("Ignoring output suggestion from virtual pointer", .{});
     }
 
-    input_manager.defaultSeat().addDevice(&event.new_pointer.pointer.base);
+    input_manager.defaultSeat().addDevice(&event.new_pointer.pointer.base, true);
 }
 
 fn handleNewVirtualKeyboard(
     _: *wl.Listener(*wlr.VirtualKeyboardV1),
     virtual_keyboard: *wlr.VirtualKeyboardV1,
 ) void {
-    const seat: *Seat = @ptrFromInt(virtual_keyboard.seat.data);
-    seat.addDevice(&virtual_keyboard.keyboard.base);
+    const no_keymap = util.gpa.create(NoKeymapVirtKeyboard) catch {
+        log.err("out of memory", .{});
+        return;
+    };
+    errdefer util.gpa.destroy(no_keymap);
+
+    no_keymap.* = .{
+        .virtual_keyboard = virtual_keyboard,
+    };
+    virtual_keyboard.keyboard.base.events.destroy.add(&no_keymap.destroy);
+    virtual_keyboard.keyboard.events.keymap.add(&no_keymap.keymap);
 }
+
+/// Ignore virtual keyboards completely until the client sets a keymap
+/// Yes, wlroots should probably do this for us.
+const NoKeymapVirtKeyboard = struct {
+    virtual_keyboard: *wlr.VirtualKeyboardV1,
+    destroy: wl.Listener(*wlr.InputDevice) = .init(handleDestroy),
+    keymap: wl.Listener(*wlr.Keyboard) = .init(handleKeymap),
+
+    fn handleDestroy(listener: *wl.Listener(*wlr.InputDevice), _: *wlr.InputDevice) void {
+        const no_keymap: *NoKeymapVirtKeyboard = @fieldParentPtr("destroy", listener);
+
+        no_keymap.destroy.link.remove();
+        no_keymap.keymap.link.remove();
+
+        util.gpa.destroy(no_keymap);
+    }
+
+    fn handleKeymap(listener: *wl.Listener(*wlr.Keyboard), _: *wlr.Keyboard) void {
+        const no_keymap: *NoKeymapVirtKeyboard = @fieldParentPtr("keymap", listener);
+        const virtual_keyboard = no_keymap.virtual_keyboard;
+
+        handleDestroy(&no_keymap.destroy, &virtual_keyboard.keyboard.base);
+
+        const seat: *Seat = @alignCast(@ptrCast(virtual_keyboard.seat.data));
+        seat.addDevice(&virtual_keyboard.keyboard.base, true);
+    }
+};
 
 fn handleNewConstraint(
     _: *wl.Listener(*wlr.PointerConstraintV1),
@@ -200,7 +236,7 @@ fn handleNewConstraint(
 }
 
 fn handleNewInputMethod(_: *wl.Listener(*wlr.InputMethodV2), input_method: *wlr.InputMethodV2) void {
-    const seat: *Seat = @ptrFromInt(input_method.seat.data);
+    const seat: *Seat = @alignCast(@ptrCast(input_method.seat.data));
 
     log.debug("new input method on seat {s}", .{seat.wlr_seat.name});
 

@@ -61,8 +61,8 @@ allocator: *wlr.Allocator,
 security_context_manager: *wlr.SecurityContextManagerV1,
 
 shm: *wlr.Shm,
-drm: ?*wlr.Drm = null,
 linux_dmabuf: ?*wlr.LinuxDmabufV1 = null,
+linux_drm_syncobj_manager: ?*wlr.LinuxDrmSyncobjManagerV1 = null,
 single_pixel_buffer_manager: *wlr.SinglePixelBufferManagerV1,
 
 viewporter: *wlr.Viewporter,
@@ -84,6 +84,8 @@ export_dmabuf_manager: *wlr.ExportDmabufManagerV1,
 screencopy_manager: *wlr.ScreencopyManagerV1,
 
 foreign_toplevel_manager: *wlr.ForeignToplevelManagerV1,
+
+foreign_toplevel_list: *wlr.ExtForeignToplevelListV1,
 
 tearing_control_manager: *wlr.TearingControlManagerV1,
 
@@ -164,6 +166,8 @@ pub fn init(server: *Server, runtime_xwayland: bool) !void {
 
         .foreign_toplevel_manager = try wlr.ForeignToplevelManagerV1.create(wl_server),
 
+        .foreign_toplevel_list = try wlr.ExtForeignToplevelListV1.create(wl_server, 1),
+
         .tearing_control_manager = try wlr.TearingControlManagerV1.create(wl_server, 1),
 
         .alpha_modifier = try wlr.AlphaModifierV1.create(wl_server),
@@ -180,13 +184,13 @@ pub fn init(server: *Server, runtime_xwayland: bool) !void {
     };
 
     if (renderer.getTextureFormats(@intFromEnum(wlr.BufferCap.dmabuf)) != null) {
-        // wl_drm is a legacy interface and all clients should switch to linux_dmabuf.
-        // However, enough widely used clients still rely on wl_drm that the pragmatic option
-        // is to keep it around for the near future.
-        // TODO remove wl_drm support
-        server.drm = try wlr.Drm.create(wl_server, renderer);
-
         server.linux_dmabuf = try wlr.LinuxDmabufV1.createWithRenderer(wl_server, 4, renderer);
+    }
+    if (renderer.features.timeline and backend.features.timeline) {
+        const drm_fd = renderer.getDrmFd();
+        if (drm_fd >= 0) {
+            server.linux_drm_syncobj_manager = wlr.LinuxDrmSyncobjManagerV1.create(wl_server, 1, drm_fd);
+        }
     }
 
     if (build_options.xwayland and runtime_xwayland) {
@@ -233,6 +237,8 @@ pub fn deinit(server: *Server) void {
 
     server.wl_server.destroyClients();
 
+    server.input_manager.new_input.link.remove();
+    server.root.new_output.link.remove();
     server.backend.destroy();
 
     // The scene graph needs to be destroyed after the backend but before the renderer
@@ -293,8 +299,12 @@ fn globalFilter(client: *const wl.Client, global: *const wl.Global, server: *Ser
 
 /// Returns true if the global is allowlisted for security contexts
 fn allowlist(server: *Server, global: *const wl.Global) bool {
-    if (server.drm) |drm| if (global == drm.global) return true;
-    if (server.linux_dmabuf) |linux_dmabuf| if (global == linux_dmabuf.global) return true;
+    if (server.linux_dmabuf) |linux_dmabuf| {
+        if (global == linux_dmabuf.global) return true;
+    }
+    if (server.linux_drm_syncobj_manager) |linux_drm_syncobj_manager| {
+        if (global == linux_drm_syncobj_manager.global) return true;
+    }
 
     // We must use the getInterface() approach for dynamically created globals
     // such as wl_output and wl_seat since the wl_global_create() function will
@@ -338,6 +348,7 @@ fn blocklist(server: *Server, global: *const wl.Global) bool {
     return global == server.security_context_manager.global or
         global == server.layer_shell.global or
         global == server.foreign_toplevel_manager.global or
+        global == server.foreign_toplevel_list.global or
         global == server.screencopy_manager.global or
         global == server.export_dmabuf_manager.global or
         global == server.data_control_manager.global or
@@ -499,7 +510,7 @@ fn handleRequestSetCursorShape(
     _: *wl.Listener(*wlr.CursorShapeManagerV1.event.RequestSetShape),
     event: *wlr.CursorShapeManagerV1.event.RequestSetShape,
 ) void {
-    const seat: *Seat = @ptrFromInt(event.seat_client.seat.data);
+    const seat: *Seat = @alignCast(@ptrCast(event.seat_client.seat.data));
 
     if (event.tablet_tool) |wp_tool| {
         assert(event.device_type == .tablet_tool);

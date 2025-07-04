@@ -138,7 +138,7 @@ wlr_cursor: *wlr.Cursor,
 /// Xcursor manager for the currently configured Xcursor theme.
 xcursor_manager: *wlr.XcursorManager,
 image: Image = .none,
-image_surface_destroy: wl.Listener(*wlr.Surface) = wl.Listener(*wlr.Surface).init(handleImageSurfaceDestroy),
+image_surface_destroy: wl.Listener(*wlr.Surface) = .init(handleImageSurfaceDestroy),
 
 /// Number of distinct buttons currently pressed
 pressed_count: u32 = 0,
@@ -255,6 +255,30 @@ pub fn init(cursor: *Cursor, seat: *Seat) !void {
 }
 
 pub fn deinit(cursor: *Cursor) void {
+    cursor.axis.link.remove();
+    cursor.button.link.remove();
+    cursor.frame.link.remove();
+    cursor.motion_absolute.link.remove();
+    cursor.motion.link.remove();
+    cursor.swipe_begin.link.remove();
+    cursor.swipe_update.link.remove();
+    cursor.swipe_end.link.remove();
+    cursor.pinch_begin.link.remove();
+    cursor.pinch_update.link.remove();
+    cursor.pinch_end.link.remove();
+    cursor.request_set_cursor.link.remove();
+
+    cursor.touch_down.link.remove();
+    cursor.touch_motion.link.remove();
+    cursor.touch_up.link.remove();
+    cursor.touch_cancel.link.remove();
+    cursor.touch_frame.link.remove();
+
+    cursor.tablet_tool_axis.link.remove();
+    cursor.tablet_tool_proximity.link.remove();
+    cursor.tablet_tool_tip.link.remove();
+    cursor.tablet_tool_button.link.remove();
+
     cursor.hide_cursor_timer.remove();
     cursor.xcursor_manager.destroy();
     cursor.wlr_cursor.destroy();
@@ -338,7 +362,7 @@ fn clearFocus(cursor: *Cursor) void {
 /// Axis event is a scroll wheel or similiar
 fn handleAxis(listener: *wl.Listener(*wlr.Pointer.event.Axis), event: *wlr.Pointer.event.Axis) void {
     const cursor: *Cursor = @fieldParentPtr("axis", listener);
-    const device: *InputDevice = @ptrFromInt(event.device.data);
+    const device: *InputDevice = @alignCast(@ptrCast(event.device.data));
 
     cursor.seat.handleActivity();
     cursor.unhide();
@@ -458,7 +482,7 @@ fn updateKeyboardFocus(cursor: Cursor, result: Root.AtResult) void {
 /// Requires a call to Root.applyPending()
 fn updateOutputFocus(cursor: Cursor, lx: f64, ly: f64) void {
     if (server.root.output_layout.outputAt(lx, ly)) |wlr_output| {
-        const output: *Output = @ptrFromInt(wlr_output.data);
+        const output: *Output = @alignCast(@ptrCast(wlr_output.data));
         cursor.seat.focusOutput(output);
     }
 }
@@ -635,7 +659,7 @@ fn handleTabletToolAxis(
     _: *wl.Listener(*wlr.Tablet.event.Axis),
     event: *wlr.Tablet.event.Axis,
 ) void {
-    const device: *InputDevice = @ptrFromInt(event.device.data);
+    const device: *InputDevice = @alignCast(@ptrCast(event.device.data));
     const tablet: *Tablet = @fieldParentPtr("device", device);
 
     device.seat.handleActivity();
@@ -649,7 +673,7 @@ fn handleTabletToolProximity(
     _: *wl.Listener(*wlr.Tablet.event.Proximity),
     event: *wlr.Tablet.event.Proximity,
 ) void {
-    const device: *InputDevice = @ptrFromInt(event.device.data);
+    const device: *InputDevice = @alignCast(@ptrCast(event.device.data));
     const tablet: *Tablet = @fieldParentPtr("device", device);
 
     device.seat.handleActivity();
@@ -663,7 +687,7 @@ fn handleTabletToolTip(
     _: *wl.Listener(*wlr.Tablet.event.Tip),
     event: *wlr.Tablet.event.Tip,
 ) void {
-    const device: *InputDevice = @ptrFromInt(event.device.data);
+    const device: *InputDevice = @alignCast(@ptrCast(event.device.data));
     const tablet: *Tablet = @fieldParentPtr("device", device);
 
     device.seat.handleActivity();
@@ -677,7 +701,7 @@ fn handleTabletToolButton(
     _: *wl.Listener(*wlr.Tablet.event.Button),
     event: *wlr.Tablet.event.Button,
 ) void {
-    const device: *InputDevice = @ptrFromInt(event.device.data);
+    const device: *InputDevice = @alignCast(@ptrCast(event.device.data));
     const tablet: *Tablet = @fieldParentPtr("device", device);
 
     device.seat.handleActivity();
@@ -1129,13 +1153,12 @@ pub fn updateState(cursor: *Cursor) void {
         .passthrough => {
             cursor.updateFocusFollowsCursorTarget();
             if (!cursor.hidden) {
-                var now: posix.timespec = undefined;
-                posix.clock_gettime(posix.CLOCK.MONOTONIC, &now) catch @panic("CLOCK_MONOTONIC not supported");
+                const now = posix.clock_gettime(.MONOTONIC) catch @panic("CLOCK_MONOTONIC not supported");
                 // 2^32-1 milliseconds is ~50 days, which is a realistic uptime.
                 // This means that we must wrap if the monotonic time is greater than
                 // 2^32-1 milliseconds and hope that clients don't get too confused.
                 const msec: u32 = @intCast(@rem(
-                    now.tv_sec *% std.time.ms_per_s +% @divTrunc(now.tv_nsec, std.time.ns_per_ms),
+                    now.sec *% std.time.ms_per_s +% @divTrunc(now.nsec, std.time.ns_per_ms),
                     math.maxInt(u32),
                 ));
                 cursor.passthrough(msec);
@@ -1256,7 +1279,7 @@ fn warp(cursor: *Cursor) void {
     };
     if (!output_layout_box.containsPoint(cursor.wlr_cursor.x, cursor.wlr_cursor.y) or
         (usable_layout_box.containsPoint(cursor.wlr_cursor.x, cursor.wlr_cursor.y) and
-        !target_box.containsPoint(cursor.wlr_cursor.x, cursor.wlr_cursor.y)))
+            !target_box.containsPoint(cursor.wlr_cursor.x, cursor.wlr_cursor.y)))
     {
         const lx: f64 = @floatFromInt(target_box.x + @divTrunc(target_box.width, 2));
         const ly: f64 = @floatFromInt(target_box.y + @divTrunc(target_box.height, 2));
@@ -1269,7 +1292,7 @@ fn warp(cursor: *Cursor) void {
 fn updateDragIcons(cursor: *Cursor) void {
     var it = server.root.drag_icons.children.iterator(.forward);
     while (it.next()) |node| {
-        const icon = @as(*DragIcon, @ptrFromInt(node.data));
+        const icon: *DragIcon = @alignCast(@ptrCast(node.data));
 
         if (icon.wlr_drag_icon.drag.seat == cursor.seat.wlr_seat) {
             icon.updatePosition(cursor);

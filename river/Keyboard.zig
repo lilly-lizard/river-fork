@@ -54,7 +54,7 @@ pub const Pressed = struct {
         // Furthermore, wlroots will continue to forward key press/release events to river if more
         // than 32 keys are pressed. Therefore river chooses to ignore keypresses that would take
         // the keyboard beyond 32 simultaneously pressed keys.
-        assert(capacity == @typeInfo(std.meta.fieldInfo(wlr.Keyboard, .keycodes).type).Array.len);
+        assert(capacity == @typeInfo(std.meta.fieldInfo(wlr.Keyboard, .keycodes).type).array.len);
     }
 
     keys: std.BoundedArray(Key, capacity) = .{},
@@ -88,7 +88,7 @@ pressed: Pressed = .{},
 key: wl.Listener(*wlr.Keyboard.event.Key) = wl.Listener(*wlr.Keyboard.event.Key).init(handleKey),
 modifiers: wl.Listener(*wlr.Keyboard) = wl.Listener(*wlr.Keyboard).init(handleModifiers),
 
-pub fn init(keyboard: *Keyboard, seat: *Seat, wlr_device: *wlr.InputDevice) !void {
+pub fn init(keyboard: *Keyboard, seat: *Seat, wlr_device: *wlr.InputDevice, virtual: bool) !void {
     keyboard.* = .{
         .device = undefined,
     };
@@ -96,14 +96,16 @@ pub fn init(keyboard: *Keyboard, seat: *Seat, wlr_device: *wlr.InputDevice) !voi
     errdefer keyboard.device.deinit();
 
     const wlr_keyboard = keyboard.device.wlr_device.toKeyboard();
-    wlr_keyboard.data = @intFromPtr(keyboard);
+    wlr_keyboard.data = keyboard;
 
-    // wlroots will log a more detailed error if this fails.
-    if (!wlr_keyboard.setKeymap(server.config.keymap)) return error.OutOfMemory;
+    if (!virtual) {
+        // wlroots will log a more detailed error if this fails.
+        if (!wlr_keyboard.setKeymap(server.config.keymap)) return error.OutOfMemory;
 
-    if (wlr.KeyboardGroup.fromKeyboard(wlr_keyboard) == null) {
-        // wlroots will log an error on failure
-        _ = seat.keyboard_group.addKeyboard(wlr_keyboard);
+        if (wlr.KeyboardGroup.fromKeyboard(wlr_keyboard) == null) {
+            // wlroots will log an error on failure
+            _ = seat.keyboard_group.addKeyboard(wlr_keyboard);
+        }
     }
 
     wlr_keyboard.setRepeatInfo(server.config.repeat_rate, server.config.repeat_delay);

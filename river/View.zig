@@ -181,6 +181,8 @@ post_fullscreen_box: wlr.Box = undefined,
 
 foreign_toplevel_handle: ForeignToplevelHandle = .{},
 
+ext_foreign_toplevel_handle: ?*wlr.ExtForeignToplevelHandleV1 = null,
+
 /// Connector name of the output this view occupied before an evacuation.
 output_before_evac: ?[]const u8 = null,
 
@@ -446,7 +448,11 @@ pub fn updateSceneState(view: *View) void {
         for (&view.borders, &border_boxes) |border, *border_box| {
             border_box.x += box.x;
             border_box.y += box.y;
-            _ = border_box.intersection(border_box, &output_box);
+            if (!border_box.intersection(border_box, &output_box)) {
+                // TODO(wlroots): remove this redundant code after fixed upstream
+                // https://gitlab.freedesktop.org/wlroots/wlroots/-/merge_requests/5084
+                border_box.* = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
+            }
             border_box.x -= box.x;
             border_box.y -= box.y;
 
@@ -482,8 +488,7 @@ pub fn rootSurface(view: View) ?*wlr.Surface {
 pub fn sendFrameDone(view: View) void {
     assert(view.mapped and !view.destroying);
 
-    var now: posix.timespec = undefined;
-    posix.clock_gettime(posix.CLOCK.MONOTONIC, &now) catch @panic("CLOCK_MONOTONIC not supported");
+    const now = posix.clock_gettime(.MONOTONIC) catch @panic("CLOCK_MONOTONIC not supported");
     view.rootSurface().?.sendFrameDone(&now);
 }
 
@@ -653,6 +658,15 @@ pub fn map(view: *View) !void {
     assert(!view.mapped and !view.destroying);
     view.mapped = true;
 
+    if (wlr.ExtForeignToplevelHandleV1.create(server.foreign_toplevel_list, &.{
+        .title = view.getTitle(),
+        .app_id = view.getAppId(),
+    })) |handle| {
+        view.ext_foreign_toplevel_handle = handle;
+    } else |_| {
+        log.err("failed to create ext foreign toplevel handle", .{});
+    }
+
     view.foreign_toplevel_handle.map();
 
     if (server.config.rules.float.match(view)) |float| {
@@ -742,6 +756,10 @@ pub fn unmap(view: *View) void {
     assert(view.mapped and !view.destroying);
     view.mapped = false;
 
+    if (view.ext_foreign_toplevel_handle) |handle| {
+        handle.destroy();
+        view.ext_foreign_toplevel_handle = null;
+    }
     view.foreign_toplevel_handle.unmap();
 
     server.root.applyPending();
@@ -751,6 +769,14 @@ pub fn notifyTitle(view: *const View) void {
     if (view.foreign_toplevel_handle.wlr_handle) |wlr_handle| {
         if (view.getTitle()) |title| wlr_handle.setTitle(title);
     }
+
+    if (view.ext_foreign_toplevel_handle) |handle| {
+        handle.updateState(&.{
+            .title = view.getTitle(),
+            .app_id = view.getAppId(),
+        });
+    }
+
     // Send title to all status listeners attached to a seat which focuses this view
     var seat_it = server.input_manager.seats.first;
     while (seat_it) |seat_node| : (seat_it = seat_node.next) {
@@ -766,5 +792,12 @@ pub fn notifyTitle(view: *const View) void {
 pub fn notifyAppId(view: View) void {
     if (view.foreign_toplevel_handle.wlr_handle) |wlr_handle| {
         if (view.getAppId()) |app_id| wlr_handle.setAppId(app_id);
+    }
+
+    if (view.ext_foreign_toplevel_handle) |handle| {
+        handle.updateState(&.{
+            .title = view.getTitle(),
+            .app_id = view.getAppId(),
+        });
     }
 }

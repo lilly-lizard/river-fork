@@ -100,7 +100,7 @@ pub fn configure(xwayland_view: XwaylandView) bool {
         xwayland_view.xwayland_surface.height == inflight.box.height and
         (inflight.focus != 0) == (current.focus != 0) and
         (output.inflight.fullscreen == xwayland_view.view) ==
-        (current.output != null and current.output.?.current.fullscreen == xwayland_view.view))
+            (current.output != null and current.output.?.current.fullscreen == xwayland_view.view))
     {
         return false;
     }
@@ -164,7 +164,7 @@ pub fn handleMap(listener: *wl.Listener(void)) void {
 
     const xwayland_surface = xwayland_view.xwayland_surface;
     const surface = xwayland_surface.surface.?;
-    surface.data = @intFromPtr(&view.tree.node);
+    surface.data = &view.tree.node;
 
     // Add listeners that are only active while mapped
     xwayland_surface.events.set_title.add(&xwayland_view.set_title);
@@ -215,11 +215,12 @@ pub fn handleMap(listener: *wl.Listener(void)) void {
 fn handleUnmap(listener: *wl.Listener(void)) void {
     const xwayland_view: *XwaylandView = @fieldParentPtr("unmap", listener);
 
-    xwayland_view.xwayland_surface.surface.?.data = 0;
+    xwayland_view.xwayland_surface.surface.?.data = null;
 
     // Remove listeners that are only active while mapped
     xwayland_view.set_title.link.remove();
     xwayland_view.set_class.link.remove();
+    xwayland_view.set_decorations.link.remove();
     xwayland_view.request_fullscreen.link.remove();
     xwayland_view.request_minimize.link.remove();
 

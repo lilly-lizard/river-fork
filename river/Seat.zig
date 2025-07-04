@@ -122,12 +122,12 @@ pub fn init(seat: *Seat, name: [*:0]const u8) !void {
         .mapping_repeat_timer = mapping_repeat_timer,
         .keyboard_group = try wlr.KeyboardGroup.create(),
     };
-    seat.wlr_seat.data = @intFromPtr(seat);
+    seat.wlr_seat.data = seat;
 
     try seat.cursor.init(seat);
     seat.relay.init();
 
-    try seat.tryAddDevice(&seat.keyboard_group.keyboard.base);
+    try seat.tryAddDevice(&seat.keyboard_group.keyboard.base, false);
 
     seat.wlr_seat.events.request_set_selection.add(&seat.request_set_selection);
     seat.wlr_seat.events.request_start_drag.add(&seat.request_start_drag);
@@ -284,7 +284,7 @@ pub fn setFocusRaw(seat: *Seat, new_focus: FocusTarget) void {
             if (seat.cursor.constraint) |constraint| {
                 assert(constraint.wlr_constraint == wlr_constraint);
             } else {
-                seat.cursor.constraint = @ptrFromInt(wlr_constraint.data);
+                seat.cursor.constraint = @alignCast(@ptrCast(wlr_constraint.data));
                 assert(seat.cursor.constraint != null);
             }
         }
@@ -312,7 +312,7 @@ pub fn keyboardEnterOrLeave(seat: *Seat, target_surface: ?*wlr.Surface) void {
 
 fn keyboardNotifyEnter(seat: *Seat, wlr_surface: *wlr.Surface) void {
     if (seat.wlr_seat.getKeyboard()) |wlr_keyboard| {
-        const keyboard: *Keyboard = @ptrFromInt(wlr_keyboard.data);
+        const keyboard: *Keyboard = @alignCast(@ptrCast(wlr_keyboard.data));
 
         var keycodes: std.BoundedArray(u32, Keyboard.Pressed.capacity) = .{};
         for (keyboard.pressed.keys.constSlice()) |item| {
@@ -480,19 +480,19 @@ fn handleMappingRepeatTimeout(seat: *Seat) c_int {
     return 0;
 }
 
-pub fn addDevice(seat: *Seat, wlr_device: *wlr.InputDevice) void {
-    seat.tryAddDevice(wlr_device) catch |err| switch (err) {
+pub fn addDevice(seat: *Seat, wlr_device: *wlr.InputDevice, virtual: bool) void {
+    seat.tryAddDevice(wlr_device, virtual) catch |err| switch (err) {
         error.OutOfMemory => log.err("out of memory", .{}),
     };
 }
 
-fn tryAddDevice(seat: *Seat, wlr_device: *wlr.InputDevice) !void {
+fn tryAddDevice(seat: *Seat, wlr_device: *wlr.InputDevice, virtual: bool) !void {
     switch (wlr_device.type) {
         .keyboard => {
             const keyboard = try util.gpa.create(Keyboard);
             errdefer util.gpa.destroy(keyboard);
 
-            try keyboard.init(seat, wlr_device);
+            try keyboard.init(seat, wlr_device, virtual);
 
             seat.wlr_seat.setKeyboard(keyboard.device.wlr_device.toKeyboard());
             if (seat.wlr_seat.keyboard_state.focused_surface) |wlr_surface| {
